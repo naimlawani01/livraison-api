@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List
 import logging
 from ..core.config import settings
@@ -15,11 +16,11 @@ class NotificationService:
     def _initialize_firebase(self):
         """Initialiser Firebase pour les notifications push"""
         try:
-            if settings.FIREBASE_CREDENTIALS_PATH:
+            if settings.FIREBASE_CREDENTIALS:
                 import firebase_admin
                 from firebase_admin import credentials
                 
-                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+                cred = credentials.Certificate(json.loads(settings.FIREBASE_CREDENTIALS.replace("'", '"')))
                 self.firebase_app = firebase_admin.initialize_app(cred)
                 logger.info("Firebase initialisé avec succès")
         except Exception as e:

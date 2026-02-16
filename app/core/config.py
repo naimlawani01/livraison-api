@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     TWILIO_PHONE_NUMBER: Optional[str] = None
     
     # Firebase
-    FIREBASE_CREDENTIALS_PATH: Optional[str] = None
+    FIREBASE_CREDENTIALS: Optional[str] = None
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
