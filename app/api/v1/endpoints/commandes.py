@@ -19,7 +19,19 @@ from ....schemas.commande import (
 )
 from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
+from ....services.notification_service import notification_service
 from ....utils.dependencies import get_current_restaurant, get_current_livreur, get_current_user
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def _get_user_device_token(db: AsyncSession, user_id) -> Optional[str]:
+    """Récupérer le device_token d'un utilisateur"""
+    q = select(User).where(User.id == user_id)
+    r = await db.execute(q)
+    u = r.scalar_one_or_none()
+    return u.device_token if u else None
 
 router = APIRouter()
 
@@ -291,6 +303,23 @@ async def accepter_commande(
         )
     
     await db.refresh(commande)
+    
+    # Notifier le restaurant que sa commande a été acceptée
+    try:
+        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
+        restaurant_result = await db.execute(restaurant_query)
+        resto = restaurant_result.scalar_one_or_none()
+        if resto:
+            token = await _get_user_device_token(db, resto.user_id)
+            if token:
+                await notification_service.notifier_commande_acceptee(
+                    device_token=token,
+                    livreur_nom=livreur.nom_complet,
+                    numero_commande=commande.numero_commande,
+                )
+    except Exception as e:
+        logger.warning(f"Notification acceptation échouée: {e}")
+    
     return commande
 
 
@@ -344,6 +373,22 @@ async def update_commande_status(
     await db.commit()
     await db.refresh(commande)
     
+    # Notifier le restaurant du changement de statut
+    try:
+        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
+        restaurant_result = await db.execute(restaurant_query)
+        resto = restaurant_result.scalar_one_or_none()
+        if resto:
+            token = await _get_user_device_token(db, resto.user_id)
+            if token:
+                await notification_service.notifier_changement_status(
+                    device_token=token,
+                    status=nouveau_statut.value,
+                    numero_commande=commande.numero_commande,
+                )
+    except Exception as e:
+        logger.warning(f"Notification changement statut échouée: {e}")
+    
     return commande
 
 
@@ -395,6 +440,36 @@ async def annuler_commande(
     
     await db.commit()
     await db.refresh(commande)
+    
+    # Notifier le livreur (si assigné) et le restaurant de l'annulation
+    try:
+        # Notifier le livreur
+        if commande.livreur_id:
+            livreur_q = select(Livreur).where(Livreur.id == commande.livreur_id)
+            livreur_r = await db.execute(livreur_q)
+            liv = livreur_r.scalar_one_or_none()
+            if liv:
+                token = await _get_user_device_token(db, liv.user_id)
+                if token:
+                    await notification_service.notifier_changement_status(
+                        device_token=token,
+                        status="ANNULEE",
+                        numero_commande=commande.numero_commande,
+                    )
+        # Notifier le restaurant
+        resto_q = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
+        resto_r = await db.execute(resto_q)
+        resto = resto_r.scalar_one_or_none()
+        if resto:
+            token = await _get_user_device_token(db, resto.user_id)
+            if token:
+                await notification_service.notifier_changement_status(
+                    device_token=token,
+                    status="ANNULEE",
+                    numero_commande=commande.numero_commande,
+                )
+    except Exception as e:
+        logger.warning(f"Notification annulation échouée: {e}")
     
     return commande
 

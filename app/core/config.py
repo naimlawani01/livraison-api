@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     
     # Firebase
     FIREBASE_CREDENTIALS: Optional[str] = None
+    FIREBASE_CREDENTIALS_PATH: Optional[str] = None
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

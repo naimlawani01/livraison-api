@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Optional, List
 import logging
 from ..core.config import settings
@@ -7,22 +8,49 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationService:
-    """Service de gestion des notifications"""
+    """Service de gestion des notifications push via Firebase Cloud Messaging"""
     
     def __init__(self):
         self.firebase_app = None
         self._initialize_firebase()
     
     def _initialize_firebase(self):
-        """Initialiser Firebase pour les notifications push"""
+        """Initialiser Firebase Admin SDK"""
         try:
+            import firebase_admin
+            from firebase_admin import credentials
+
+            if firebase_admin._apps:
+                self.firebase_app = firebase_admin.get_app()
+                logger.info("Firebase déjà initialisé (réutilisation)")
+                return
+
+            cred = None
+
+            # Méthode 1 : JSON inline dans FIREBASE_CREDENTIALS
             if settings.FIREBASE_CREDENTIALS:
-                import firebase_admin
-                from firebase_admin import credentials
-                
-                cred = credentials.Certificate(json.loads(settings.FIREBASE_CREDENTIALS.replace("'", '"')))
+                try:
+                    cred_dict = json.loads(settings.FIREBASE_CREDENTIALS)
+                    cred = credentials.Certificate(cred_dict)
+                    logger.info("Firebase credentials chargées depuis env (JSON inline)")
+                except json.JSONDecodeError:
+                    logger.warning("FIREBASE_CREDENTIALS n'est pas un JSON valide")
+
+            # Méthode 2 : Chemin vers un fichier JSON
+            if cred is None and settings.FIREBASE_CREDENTIALS_PATH:
+                path = settings.FIREBASE_CREDENTIALS_PATH
+                if os.path.exists(path):
+                    cred = credentials.Certificate(path)
+                    logger.info(f"Firebase credentials chargées depuis fichier: {path}")
+                else:
+                    logger.warning(f"Fichier Firebase introuvable: {path}")
+
+            if cred is not None:
                 self.firebase_app = firebase_admin.initialize_app(cred)
-                logger.info("Firebase initialisé avec succès")
+                logger.info("Firebase Admin SDK initialisé avec succès")
+            else:
+                logger.warning("Aucune credentials Firebase trouvées — notifications push désactivées")
+
         except Exception as e:
             logger.warning(f"Firebase non initialisé: {e}")
     
@@ -33,21 +61,10 @@ class NotificationService:
         message: str,
         data: Optional[dict] = None
     ) -> bool:
-        """
-        Envoyer une notification push
-        
-        Args:
-            device_token: Token du device
-            titre: Titre de la notification
-            message: Message de la notification
-            data: Données additionnelles
-            
-        Returns:
-            True si succès, False sinon
-        """
+        """Envoyer une notification push à un appareil"""
         try:
             if not self.firebase_app:
-                logger.warning("Firebase non configuré, notification ignorée")
+                logger.debug("Firebase non configuré, notification ignorée")
                 return False
             
             from firebase_admin import messaging
@@ -57,9 +74,11 @@ class NotificationService:
                 body=message
             )
             
+            str_data = {k: str(v) for k, v in (data or {}).items()}
+            
             message_obj = messaging.Message(
                 notification=notification,
-                data=data or {},
+                data=str_data,
                 token=device_token
             )
             
@@ -70,6 +89,23 @@ class NotificationService:
         except Exception as e:
             logger.error(f"Erreur envoi notification: {e}")
             return False
+
+    async def envoyer_a_plusieurs(
+        self,
+        device_tokens: List[str],
+        titre: str,
+        message: str,
+        data: Optional[dict] = None
+    ) -> int:
+        """Envoyer une notification à plusieurs appareils. Retourne le nombre de succès."""
+        if not self.firebase_app or not device_tokens:
+            return 0
+
+        sent = 0
+        for token in device_tokens:
+            if await self.envoyer_notification_push(token, titre, message, data):
+                sent += 1
+        return sent
     
     async def notifier_nouvelle_commande(
         self,
@@ -79,17 +115,13 @@ class NotificationService:
         prix: float,
         distance_km: float
     ):
-        """Notifier les livreurs d'une nouvelle commande"""
-        titre = "📦 Nouvelle course disponible"
-        message = f"{restaurant_nom} - {prix} FCFA - {distance_km:.1f} km"
+        """Notifier les livreurs d'une nouvelle commande disponible"""
+        titre = "Nouvelle course disponible"
+        msg = f"{restaurant_nom} — {prix:.0f} FCFA — {distance_km:.1f} km"
+        data = {"type": "nouvelle_commande", "numero_commande": numero_commande}
         
-        data = {
-            "type": "nouvelle_commande",
-            "numero_commande": numero_commande
-        }
-        
-        for token in device_tokens:
-            await self.envoyer_notification_push(token, titre, message, data)
+        count = await self.envoyer_a_plusieurs(device_tokens, titre, msg, data)
+        logger.info(f"Notification nouvelle commande envoyée à {count}/{len(device_tokens)} livreurs")
     
     async def notifier_commande_acceptee(
         self,
@@ -97,16 +129,12 @@ class NotificationService:
         livreur_nom: str,
         numero_commande: str
     ):
-        """Notifier le restaurant que la commande a été acceptée"""
-        titre = "✅ Course acceptée"
-        message = f"{livreur_nom} a accepté la course #{numero_commande}"
+        """Notifier le restaurant que sa commande a été acceptée"""
+        titre = "Course acceptée"
+        msg = f"{livreur_nom} a accepté la course #{numero_commande}"
+        data = {"type": "commande_acceptee", "numero_commande": numero_commande}
         
-        data = {
-            "type": "commande_acceptee",
-            "numero_commande": numero_commande
-        }
-        
-        await self.envoyer_notification_push(device_token, titre, message, data)
+        await self.envoyer_notification_push(device_token, titre, msg, data)
     
     async def notifier_changement_status(
         self,
@@ -114,25 +142,19 @@ class NotificationService:
         status: str,
         numero_commande: str
     ):
-        """Notifier un changement de statut"""
+        """Notifier un changement de statut de commande"""
         status_messages = {
-            "en_recuperation": "🏪 Le livreur arrive au restaurant",
-            "en_livraison": "🏍️ Le livreur est en route",
-            "terminee": "✅ Livraison terminée",
-            "annulee": "❌ Livraison annulée"
+            "EN_RECUPERATION": "Le livreur arrive au restaurant",
+            "EN_LIVRAISON": "Le livreur est en route vers le client",
+            "TERMINEE": "Livraison terminée avec succès",
+            "ANNULEE": "Livraison annulée"
         }
         
-        titre = "Mise à jour commande"
-        message = f"{status_messages.get(status, status)} - #{numero_commande}"
+        msg = status_messages.get(status, f"Statut mis à jour : {status}")
+        titre = f"Commande #{numero_commande}"
+        data = {"type": "changement_status", "numero_commande": numero_commande, "status": status}
         
-        data = {
-            "type": "changement_status",
-            "numero_commande": numero_commande,
-            "status": status
-        }
-        
-        await self.envoyer_notification_push(device_token, titre, message, data)
+        await self.envoyer_notification_push(device_token, titre, msg, data)
 
 
-# Instance singleton
 notification_service = NotificationService()
