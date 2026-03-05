@@ -181,7 +181,6 @@ def _tracking_html(token: str, numero: str, restaurant: str) -> str:
     border-radius: 10px; font-size: 13px; font-weight: 600;
     display: none;
   }}
-  .banner.delivered {{ display: block; background: #d4edda; color: #155724; }}
   .banner.cancelled {{ display: block; background: #f8d7da; color: #721c24; }}
 
   .pulse {{ animation: pulse 2s ease-in-out infinite; }}
@@ -237,7 +236,6 @@ def _tracking_html(token: str, numero: str, restaurant: str) -> str:
     <a class="phone" id="livreurTel" href="#">📞 Appeler le livreur</a>
   </div>
 
-  <div class="banner delivered" id="bannerDelivered">✅ Votre commande a été livrée !</div>
   <div class="banner cancelled" id="bannerCancelled">❌ Cette commande a été annulée</div>
 
   <div class="refresh-info pulse" id="refreshInfo">Mise à jour automatique…</div>
@@ -313,7 +311,6 @@ function updateUI(data) {{
   }}
 
   // Banners
-  document.getElementById('bannerDelivered').style.display = s === 'TERMINEE' ? 'block' : 'none';
   document.getElementById('bannerCancelled').style.display = s === 'ANNULEE' ? 'block' : 'none';
 
   if (s === 'TERMINEE' || s === 'ANNULEE') {{
