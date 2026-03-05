@@ -44,6 +44,12 @@ async def estimer_prix(
     db: AsyncSession = Depends(get_db)
 ):
     """Estimer le prix de livraison en fonction de la distance"""
+    if not restaurant.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Votre restaurant doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+        )
+
     lat = data.get("latitude_client")
     lng = data.get("longitude_client")
 
@@ -82,6 +88,12 @@ async def create_commande(
     db: AsyncSession = Depends(get_db)
 ):
     """Créer une nouvelle commande de livraison"""
+    if not restaurant.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Votre restaurant doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+        )
+
     # Calculer la commission
     commission, montant_livreur = MatchingService.calculer_commission(
         commande_data.prix_propose
@@ -164,6 +176,12 @@ async def get_commandes_disponibles(
     db: AsyncSession = Depends(get_db)
 ):
     """Obtenir les commandes disponibles à proximité du livreur"""
+    if not livreur.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Votre compte doit être vérifié par un administrateur pour voir les courses disponibles"
+        )
+
     livreur_lat = lat if lat is not None else livreur.latitude
     livreur_lon = lon if lon is not None else livreur.longitude
     has_position = livreur_lat is not None and livreur_lon is not None
@@ -256,6 +274,12 @@ async def accepter_commande(
     db: AsyncSession = Depends(get_db)
 ):
     """Accepter une commande (livreur)"""
+    if not livreur.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Votre compte doit être vérifié par un administrateur pour accepter des courses"
+        )
+
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
