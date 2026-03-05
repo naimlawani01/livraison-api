@@ -122,6 +122,10 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Inclure les routes API
 app.include_router(api_router, prefix=settings.API_PREFIX)
 
+# Routes publiques pour la localisation client (pas de prefix API, pas d'auth)
+from .api.v1.endpoints.location import router as location_public_router
+app.include_router(location_public_router, tags=["Location (public)"], include_in_schema=False)
+
 
 @app.get("/")
 async def root():

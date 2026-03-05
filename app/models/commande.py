@@ -36,7 +36,7 @@ class Commande(Base):
     livreur_id = Column(UUID(as_uuid=True), ForeignKey("livreurs.id", ondelete="SET NULL"), nullable=True)
     
     # Informations de livraison
-    adresse_client = Column(String(500), nullable=False)
+    adresse_client = Column(String(500), nullable=True)
     latitude_client = Column(Float, nullable=True)
     longitude_client = Column(Float, nullable=True)
     
@@ -45,6 +45,10 @@ class Commande(Base):
     
     # Instructions
     instructions_speciales = Column(Text, nullable=True)
+    
+    # Lien de localisation client
+    location_token = Column(String(64), unique=True, nullable=True, index=True)
+    location_shared_at = Column(DateTime, nullable=True)
     
     # Paiement
     mode_paiement = Column(SQLEnum(ModePaiement), default=ModePaiement.CASH, nullable=False)

@@ -7,7 +7,7 @@ from ..models.commande import CommandeStatus, ModePaiement
 
 class CommandeBase(BaseModel):
     """Schéma de base pour une commande"""
-    adresse_client: str = Field(..., min_length=5, max_length=500)
+    adresse_client: Optional[str] = Field(None, max_length=500)
     contact_client_nom: str = Field(..., min_length=2, max_length=255)
     contact_client_telephone: str = Field(..., min_length=8, max_length=20)
     instructions_speciales: Optional[str] = None
@@ -55,6 +55,8 @@ class CommandeResponse(CommandeBase):
     status: CommandeStatus
     note_livreur: Optional[int]
     commentaire_livreur: Optional[str]
+    location_token: Optional[str]
+    location_shared_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
     diffusee_at: Optional[datetime]
