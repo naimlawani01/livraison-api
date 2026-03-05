@@ -116,6 +116,12 @@ async def valider_livreur(
     livreur.is_verified = True
     livreur.verified_at = datetime.utcnow()
     
+    user_query = select(User).where(User.id == livreur.user_id)
+    user_result = await db.execute(user_query)
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.is_verified = True
+    
     await db.commit()
     
     return {"message": "Livreur validé avec succès"}
@@ -177,6 +183,88 @@ async def get_tous_livreurs(
         }
         for l in livreurs
     ]
+
+
+@router.get("/restaurants/en-attente", response_model=List[dict])
+async def get_restaurants_en_attente(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Obtenir les restaurants en attente de validation"""
+    query = select(Restaurant).where(Restaurant.is_verified == False)
+    result = await db.execute(query)
+    restaurants = result.scalars().all()
+    
+    return [
+        {
+            "id": str(r.id),
+            "nom": r.nom,
+            "adresse": r.adresse,
+            "email": r.email,
+            "created_at": r.created_at,
+        }
+        for r in restaurants
+    ]
+
+
+@router.post("/restaurants/{restaurant_id}/valider")
+async def valider_restaurant(
+    restaurant_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Valider le compte d'un restaurant"""
+    query = select(Restaurant).where(Restaurant.id == restaurant_id)
+    result = await db.execute(query)
+    restaurant = result.scalar_one_or_none()
+    
+    if not restaurant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Restaurant non trouvé"
+        )
+    
+    restaurant.is_verified = True
+    
+    user_query = select(User).where(User.id == restaurant.user_id)
+    user_result = await db.execute(user_query)
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.is_verified = True
+    
+    await db.commit()
+    
+    return {"message": "Restaurant validé avec succès"}
+
+
+@router.post("/restaurants/{restaurant_id}/suspendre")
+async def suspendre_restaurant(
+    restaurant_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Suspendre un restaurant"""
+    query = select(Restaurant).where(Restaurant.id == restaurant_id)
+    result = await db.execute(query)
+    restaurant = result.scalar_one_or_none()
+    
+    if not restaurant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Restaurant non trouvé"
+        )
+    
+    restaurant.is_verified = False
+    
+    user_query = select(User).where(User.id == restaurant.user_id)
+    user_result = await db.execute(user_query)
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.is_active = False
+    
+    await db.commit()
+    
+    return {"message": "Restaurant suspendu"}
 
 
 @router.get("/restaurants/tous", response_model=List[dict])
