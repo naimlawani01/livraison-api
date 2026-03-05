@@ -57,6 +57,7 @@ class CommandeResponse(CommandeBase):
     commentaire_livreur: Optional[str]
     location_token: Optional[str]
     location_shared_at: Optional[datetime]
+    tracking_token: Optional[str]
     created_at: datetime
     updated_at: datetime
     diffusee_at: Optional[datetime]

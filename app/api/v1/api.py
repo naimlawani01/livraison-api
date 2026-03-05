@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .endpoints import auth, restaurants, livreurs, commandes, admin, location
+from .endpoints import auth, restaurants, livreurs, commandes, admin, location, tracking
 
 api_router = APIRouter()
 
@@ -9,3 +9,4 @@ api_router.include_router(livreurs.router, prefix="/livreurs", tags=["Livreurs"]
 api_router.include_router(commandes.router, prefix="/commandes", tags=["Commandes"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Administration"])
 api_router.include_router(location.router, tags=["Location"])
+api_router.include_router(tracking.router, tags=["Tracking"])

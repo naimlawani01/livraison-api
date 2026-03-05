@@ -50,6 +50,9 @@ class Commande(Base):
     location_token = Column(String(64), unique=True, nullable=True, index=True)
     location_shared_at = Column(DateTime, nullable=True)
     
+    # Lien de suivi client
+    tracking_token = Column(String(64), unique=True, nullable=True, index=True)
+    
     # Paiement
     mode_paiement = Column(SQLEnum(ModePaiement), default=ModePaiement.CASH, nullable=False)
     paiement_confirme = Column(String(10), default="non", nullable=False)  # non, oui

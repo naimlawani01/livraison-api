@@ -122,9 +122,11 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Inclure les routes API
 app.include_router(api_router, prefix=settings.API_PREFIX)
 
-# Routes publiques pour la localisation client (pas de prefix API, pas d'auth)
+# Routes publiques (pas de prefix API, pas d'auth)
 from .api.v1.endpoints.location import router as location_public_router
+from .api.v1.endpoints.tracking import router as tracking_public_router
 app.include_router(location_public_router, tags=["Location (public)"], include_in_schema=False)
+app.include_router(tracking_public_router, tags=["Tracking (public)"], include_in_schema=False)
 
 
 @app.get("/")

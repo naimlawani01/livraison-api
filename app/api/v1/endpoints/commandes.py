@@ -22,6 +22,7 @@ from ....services.geolocation_service import GeolocationService
 from ....services.notification_service import notification_service
 from ....utils.dependencies import get_current_restaurant, get_current_livreur, get_current_user
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,8 @@ async def create_commande(
         mode_paiement=commande_data.mode_paiement,
         distance_km=distance_km,
         duree_estimee_minutes=duree_estimee,
-        status=CommandeStatus.CREEE
+        status=CommandeStatus.CREEE,
+        tracking_token=secrets.token_urlsafe(32),
     )
     
     db.add(commande)
