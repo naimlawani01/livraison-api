@@ -162,14 +162,10 @@ async def get_commandes_disponibles(
     db: AsyncSession = Depends(get_db)
 ):
     """Obtenir les commandes disponibles à proximité du livreur"""
-    # Utiliser les coords en param ou celles stockées pour le livreur
     livreur_lat = lat if lat is not None else livreur.latitude
     livreur_lon = lon if lon is not None else livreur.longitude
-    
-    if not livreur_lat or not livreur_lon:
-        return []
-    
-    # Récupérer toutes les commandes diffusées ou créées (pas encore prises)
+    has_position = livreur_lat is not None and livreur_lon is not None
+
     query = select(Commande).where(
         or_(
             Commande.status == CommandeStatus.DIFFUSEE,
@@ -178,53 +174,57 @@ async def get_commandes_disponibles(
     ).order_by(Commande.created_at.desc())
     result = await db.execute(query)
     commandes = result.scalars().all()
-    
-    # Filtrer par distance et enrichir avec infos restaurant
+
     commandes_proches = []
     for commande in commandes:
-        # Récupérer le restaurant
         restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
         restaurant_result = await db.execute(restaurant_query)
         restaurant = restaurant_result.scalar_one_or_none()
-        
-        if restaurant:
-            # Distance livreur -> restaurant
+
+        if not restaurant:
+            continue
+
+        distance_livreur = None
+        duree_livreur = None
+
+        if has_position and restaurant.latitude and restaurant.longitude:
             distance_livreur = GeolocationService.calculer_distance(
                 (livreur_lat, livreur_lon),
                 (restaurant.latitude, restaurant.longitude)
             )
-            
-            if distance_livreur <= rayon:
-                duree_livreur = GeolocationService.estimer_duree_trajet(distance_livreur)
-                
-                commandes_proches.append(CommandeDisponibleResponse(
-                    id=commande.id,
-                    numero_commande=commande.numero_commande,
-                    restaurant_id=commande.restaurant_id,
-                    adresse_client=commande.adresse_client,
-                    latitude_client=commande.latitude_client,
-                    longitude_client=commande.longitude_client,
-                    contact_client_nom=commande.contact_client_nom,
-                    contact_client_telephone=commande.contact_client_telephone,
-                    instructions_speciales=commande.instructions_speciales,
-                    prix_propose=commande.prix_propose,
-                    commission_plateforme=commande.commission_plateforme,
-                    montant_livreur=commande.montant_livreur,
-                    distance_km=commande.distance_km,
-                    duree_estimee_minutes=commande.duree_estimee_minutes,
-                    status=commande.status,
-                    created_at=commande.created_at,
-                    restaurant_nom=restaurant.nom,
-                    restaurant_adresse=restaurant.adresse,
-                    restaurant_latitude=restaurant.latitude,
-                    restaurant_longitude=restaurant.longitude,
-                    distance_livreur_km=round(distance_livreur, 2),
-                    duree_livreur_minutes=duree_livreur,
-                ))
-    
-    # Trier par distance livreur (plus proche en premier)
+            if distance_livreur > rayon:
+                continue
+            duree_livreur = GeolocationService.estimer_duree_trajet(distance_livreur)
+
+        commandes_proches.append(CommandeDisponibleResponse(
+            id=commande.id,
+            numero_commande=commande.numero_commande,
+            restaurant_id=commande.restaurant_id,
+            adresse_client=commande.adresse_client,
+            latitude_client=commande.latitude_client,
+            longitude_client=commande.longitude_client,
+            contact_client_nom=commande.contact_client_nom,
+            contact_client_telephone=commande.contact_client_telephone,
+            instructions_speciales=commande.instructions_speciales,
+            prix_propose=commande.prix_propose,
+            commission_plateforme=commande.commission_plateforme,
+            montant_livreur=commande.montant_livreur,
+            distance_km=commande.distance_km,
+            duree_estimee_minutes=commande.duree_estimee_minutes,
+            status=commande.status,
+            created_at=commande.created_at,
+            mode_paiement=commande.mode_paiement,
+            paiement_confirme=commande.paiement_confirme,
+            restaurant_nom=restaurant.nom,
+            restaurant_adresse=restaurant.adresse,
+            restaurant_latitude=restaurant.latitude,
+            restaurant_longitude=restaurant.longitude,
+            distance_livreur_km=round(distance_livreur, 2) if distance_livreur is not None else None,
+            duree_livreur_minutes=duree_livreur,
+        ))
+
     commandes_proches.sort(key=lambda c: c.distance_livreur_km or 999)
-    
+
     return commandes_proches
 
 

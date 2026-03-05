@@ -93,7 +93,7 @@ class CommandeDisponibleResponse(BaseModel):
     id: UUID
     numero_commande: str
     restaurant_id: UUID
-    adresse_client: str
+    adresse_client: Optional[str] = None
     latitude_client: Optional[float] = None
     longitude_client: Optional[float] = None
     contact_client_nom: str
@@ -106,6 +106,8 @@ class CommandeDisponibleResponse(BaseModel):
     duree_estimee_minutes: Optional[int] = None
     status: CommandeStatus
     created_at: datetime
+    mode_paiement: Optional[str] = "CASH"
+    paiement_confirme: Optional[str] = "non"
     
     # Infos restaurant
     restaurant_nom: str
