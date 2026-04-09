@@ -26,7 +26,7 @@ from ....utils.dependencies import get_current_user
 router = APIRouter()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
@@ -66,11 +66,15 @@ async def register(
     await db.commit()
     await db.refresh(user)
     
-    # Envoyer le SMS (seulement en prod)
-    if not settings.DEBUG:
-        await sms_service.envoyer_otp(user.phone, otp_code)
+    # Générer les tokens (immédiat après inscription pour fluidifier l'UX)
+    access_token = create_access_token({"sub": str(user.id), "role": user.role})
+    refresh_token = create_refresh_token({"sub": str(user.id)})
     
-    return user
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=UserResponse.model_validate(user)
+    )
 
 
 @router.post("/request-otp")
