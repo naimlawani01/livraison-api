@@ -2,8 +2,8 @@
 Endpoints pour le partage de localisation client.
 
 Flux :
-1. Le restaurant crée une commande → un location_token est généré
-2. Le restaurant envoie le lien (contenant le token) au client via WhatsApp/SMS
+1. Le partenaire crée une commande → un location_token est généré
+2. Le partenaire envoie le lien (contenant le token) au client via WhatsApp/SMS
 3. Le client ouvre le lien → page HTML qui demande sa position GPS
 4. Le client autorise → sa position est envoyée ici et sauvegardée
 """
@@ -143,7 +143,7 @@ def _location_html(token: str) -> str:
 <div class="card">
   <div class="icon">📍</div>
   <h1>Partagez votre position</h1>
-  <p>Le restaurant a besoin de votre position pour vous livrer. Appuyez sur le bouton ci-dessous pour partager votre localisation GPS.</p>
+  <p>Le partenaire a besoin de votre position pour vous livrer. Appuyez sur le bouton ci-dessous pour partager votre localisation GPS.</p>
   <button class="btn" id="shareBtn" onclick="shareLocation()">
     Partager ma position
   </button>
@@ -271,7 +271,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le restaurant pour obtenir un nouveau lien.</p>
+  <p>Ce lien n'est plus valide. Contactez le partenaire pour obtenir un nouveau lien.</p>
 </div>
 </body>
 </html>"""

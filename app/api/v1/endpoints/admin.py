@@ -5,7 +5,7 @@ from typing import List
 from datetime import datetime
 from ....core.database import get_db
 from ....models.user import User
-from ....models.restaurant import Restaurant
+from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
 from ....models.commande import Commande, CommandeStatus
 from ....utils.dependencies import get_current_admin
@@ -24,10 +24,10 @@ async def get_platform_stats(
     users_result = await db.execute(users_query)
     total_users = users_result.scalar()
     
-    # Nombre de restaurants
-    restaurants_query = select(func.count(Restaurant.id))
-    restaurants_result = await db.execute(restaurants_query)
-    total_restaurants = restaurants_result.scalar()
+    # Nombre de partenaires
+    partenaires_query = select(func.count(Partenaire.id))
+    partenaires_result = await db.execute(partenaires_query)
+    total_partenaires = partenaires_result.scalar()
     
     # Nombre de livreurs
     livreurs_query = select(func.count(Livreur.id))
@@ -65,7 +65,7 @@ async def get_platform_stats(
     
     return {
         "total_utilisateurs": total_users,
-        "total_restaurants": total_restaurants,
+        "total_partenaires": total_partenaires,
         "total_livreurs": total_livreurs,
         "livreurs_actifs": livreurs_actifs,
         "total_commandes": total_commandes,
@@ -80,7 +80,9 @@ async def get_livreurs_en_attente(
     db: AsyncSession = Depends(get_db)
 ):
     """Obtenir les livreurs en attente de validation"""
-    query = select(Livreur).where(Livreur.is_verified == False)
+    from sqlalchemy.orm import selectinload
+
+    query = select(Livreur).options(selectinload(Livreur.user)).where(Livreur.is_verified == False)
     result = await db.execute(query)
     livreurs = result.scalars().all()
     
@@ -89,6 +91,7 @@ async def get_livreurs_en_attente(
             "id": str(l.id),
             "nom_complet": l.nom_complet,
             "email": l.email,
+            "phone": l.user.phone if l.user else None,
             "type_vehicule": l.type_vehicule,
             "created_at": l.created_at
         }
@@ -164,7 +167,9 @@ async def get_tous_livreurs(
     db: AsyncSession = Depends(get_db)
 ):
     """Obtenir tous les livreurs"""
-    query = select(Livreur).order_by(Livreur.created_at.desc())
+    from sqlalchemy.orm import selectinload
+
+    query = select(Livreur).options(selectinload(Livreur.user)).order_by(Livreur.created_at.desc())
     result = await db.execute(query)
     livreurs = result.scalars().all()
     
@@ -173,6 +178,7 @@ async def get_tous_livreurs(
             "id": str(l.id),
             "nom_complet": l.nom_complet,
             "email": l.email,
+            "phone": l.user.phone if l.user else None,
             "type_vehicule": l.type_vehicule,
             "is_disponible": l.is_disponible,
             "is_verified": l.is_verified,
@@ -185,15 +191,17 @@ async def get_tous_livreurs(
     ]
 
 
-@router.get("/restaurants/en-attente", response_model=List[dict])
-async def get_restaurants_en_attente(
+@router.get("/partenaires/en-attente", response_model=List[dict])
+async def get_partenaires_en_attente(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les restaurants en attente de validation"""
-    query = select(Restaurant).where(Restaurant.is_verified == False)
+    """Obtenir les partenaires en attente de validation"""
+    from sqlalchemy.orm import selectinload
+
+    query = select(Partenaire).options(selectinload(Partenaire.user)).where(Partenaire.is_verified == False)
     result = await db.execute(query)
-    restaurants = result.scalars().all()
+    partenaires = result.scalars().all()
     
     return [
         {
@@ -201,32 +209,34 @@ async def get_restaurants_en_attente(
             "nom": r.nom,
             "adresse": r.adresse,
             "email": r.email,
+            "phone": r.user.phone if r.user else None,
+            "type_partenaire": r.type_partenaire,
             "created_at": r.created_at,
         }
-        for r in restaurants
+        for r in partenaires
     ]
 
 
-@router.post("/restaurants/{restaurant_id}/valider")
-async def valider_restaurant(
-    restaurant_id: str,
+@router.post("/partenaires/{partenaire_id}/valider")
+async def valider_partenaire(
+    partenaire_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Valider le compte d'un restaurant"""
-    query = select(Restaurant).where(Restaurant.id == restaurant_id)
+    """Valider le compte d'un partenaire"""
+    query = select(Partenaire).where(Partenaire.id == partenaire_id)
     result = await db.execute(query)
-    restaurant = result.scalar_one_or_none()
+    partenaire = result.scalar_one_or_none()
     
-    if not restaurant:
+    if not partenaire:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Restaurant non trouvé"
+            detail="Partenaire non trouvé"
         )
     
-    restaurant.is_verified = True
+    partenaire.is_verified = True
     
-    user_query = select(User).where(User.id == restaurant.user_id)
+    user_query = select(User).where(User.id == partenaire.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
@@ -234,29 +244,29 @@ async def valider_restaurant(
     
     await db.commit()
     
-    return {"message": "Restaurant validé avec succès"}
+    return {"message": "Partenaire validé avec succès"}
 
 
-@router.post("/restaurants/{restaurant_id}/suspendre")
-async def suspendre_restaurant(
-    restaurant_id: str,
+@router.post("/partenaires/{partenaire_id}/suspendre")
+async def suspendre_partenaire(
+    partenaire_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Suspendre un restaurant"""
-    query = select(Restaurant).where(Restaurant.id == restaurant_id)
+    """Suspendre un partenaire"""
+    query = select(Partenaire).where(Partenaire.id == partenaire_id)
     result = await db.execute(query)
-    restaurant = result.scalar_one_or_none()
+    partenaire = result.scalar_one_or_none()
     
-    if not restaurant:
+    if not partenaire:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Restaurant non trouvé"
+            detail="Partenaire non trouvé"
         )
     
-    restaurant.is_verified = False
+    partenaire.is_verified = False
     
-    user_query = select(User).where(User.id == restaurant.user_id)
+    user_query = select(User).where(User.id == partenaire.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
@@ -264,18 +274,20 @@ async def suspendre_restaurant(
     
     await db.commit()
     
-    return {"message": "Restaurant suspendu"}
+    return {"message": "Partenaire suspendu"}
 
 
-@router.get("/restaurants/tous", response_model=List[dict])
-async def get_tous_restaurants(
+@router.get("/partenaires/tous", response_model=List[dict])
+async def get_tous_partenaires(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir tous les restaurants"""
-    query = select(Restaurant).order_by(Restaurant.created_at.desc())
+    """Obtenir tous les partenaires"""
+    from sqlalchemy.orm import selectinload
+
+    query = select(Partenaire).options(selectinload(Partenaire.user)).order_by(Partenaire.created_at.desc())
     result = await db.execute(query)
-    restaurants = result.scalars().all()
+    partenaires = result.scalars().all()
     
     return [
         {
@@ -283,13 +295,15 @@ async def get_tous_restaurants(
             "nom": r.nom,
             "adresse": r.adresse,
             "email": r.email,
+            "phone": r.user.phone if r.user else None,
+            "type_partenaire": r.type_partenaire,
             "is_open": r.is_open,
             "is_verified": r.is_verified,
             "note_moyenne": r.note_moyenne,
             "nombre_evaluations": r.nombre_evaluations,
             "created_at": r.created_at,
         }
-        for r in restaurants
+        for r in partenaires
     ]
 
 
@@ -299,18 +313,40 @@ async def get_commandes_recentes(
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les commandes récentes"""
-    query = select(Commande).order_by(Commande.created_at.desc()).limit(limit)
+    """Obtenir les commandes récentes avec infos partenaire et livreur"""
+    from sqlalchemy.orm import selectinload
+
+    query = (
+        select(Commande)
+        .options(
+            selectinload(Commande.partenaire).selectinload(Partenaire.user),
+            selectinload(Commande.livreur).selectinload(Livreur.user),
+        )
+        .order_by(Commande.created_at.desc())
+        .limit(limit)
+    )
     result = await db.execute(query)
     commandes = result.scalars().all()
-    
-    return [
-        {
+
+    items = []
+    for c in commandes:
+        partenaire_nom = c.partenaire.nom if c.partenaire else None
+        partenaire_phone = c.partenaire.user.phone if c.partenaire and c.partenaire.user else None
+        livreur_nom = c.livreur.nom_complet if c.livreur else None
+        livreur_phone = c.livreur.user.phone if c.livreur and c.livreur.user else None
+
+        items.append({
             "id": str(c.id),
             "numero_commande": c.numero_commande,
             "status": c.status,
             "prix_propose": c.prix_propose,
-            "created_at": c.created_at
-        }
-        for c in commandes
-    ]
+            "contact_client_nom": c.contact_client_nom,
+            "contact_client_telephone": c.contact_client_telephone,
+            "partenaire_nom": partenaire_nom,
+            "partenaire_phone": partenaire_phone,
+            "livreur_nom": livreur_nom,
+            "livreur_phone": livreur_phone,
+            "created_at": c.created_at,
+        })
+
+    return items

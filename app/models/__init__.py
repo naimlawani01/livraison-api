@@ -1,12 +1,14 @@
-from .user import User
-from .restaurant import Restaurant
+from .user import User, UserRole
 from .livreur import Livreur
+from .partenaire import Partenaire, TypePartenaire
 from .commande import Commande, CommandeStatus
 
 __all__ = [
     "User",
-    "Restaurant",
+    "UserRole",
     "Livreur",
+    "Partenaire",
+    "TypePartenaire",
     "Commande",
     "CommandeStatus"
 ]

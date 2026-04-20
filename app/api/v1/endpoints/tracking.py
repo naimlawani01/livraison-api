@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from ....core.database import get_db
 from ....models.commande import Commande
-from ....models.restaurant import Restaurant
+from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
 from ....models.user import User
 from ....utils.dependencies import get_current_user
@@ -59,12 +59,12 @@ async def tracking_page(token: str, db: AsyncSession = Depends(get_db)):
     if not commande:
         return HTMLResponse(content=_error_html("Lien invalide ou expiré"), status_code=404)
 
-    resto_q = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-    resto_r = await db.execute(resto_q)
-    restaurant = resto_r.scalar_one_or_none()
-    resto_nom = restaurant.nom if restaurant else "Restaurant"
+    partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+    partenaire_r = await db.execute(partenaire_q)
+    partenaire_row = partenaire_r.scalar_one_or_none()
+    partenaire_nom = partenaire_row.nom if partenaire_row else "Partenaire"
 
-    return HTMLResponse(content=_tracking_html(token, commande.numero_commande, resto_nom))
+    return HTMLResponse(content=_tracking_html(token, commande.numero_commande, partenaire_nom))
 
 
 # ── API JSON pour le polling ────────────────────────────
@@ -106,7 +106,7 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 
 # ── HTML Templates ──────────────────────────────────────
 
-def _tracking_html(token: str, numero: str, restaurant: str) -> str:
+def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -199,7 +199,7 @@ def _tracking_html(token: str, numero: str, restaurant: str) -> str:
 <div class="card">
   <div class="header">
     <div class="icon">🛵</div>
-    <h1>{restaurant}</h1>
+    <h1>{partenaire}</h1>
     <div class="sub">Suivi de votre livraison</div>
     <div class="numero">{numero}</div>
   </div>
@@ -207,12 +207,12 @@ def _tracking_html(token: str, numero: str, restaurant: str) -> str:
   <div class="stepper">
     <div class="step" id="step-creee">
       <div class="step-title">Commande reçue</div>
-      <div class="step-desc">Le restaurant prépare votre commande</div>
+      <div class="step-desc">Le partenaire prépare votre commande</div>
       <div class="step-time" id="time-creee"></div>
     </div>
     <div class="step" id="step-acceptee">
       <div class="step-title">Livreur assigné</div>
-      <div class="step-desc">Un livreur se dirige vers le restaurant</div>
+      <div class="step-desc">Un livreur se dirige vers le partenaire</div>
       <div class="step-time" id="time-acceptee"></div>
     </div>
     <div class="step" id="step-recuperee">
@@ -365,7 +365,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le restaurant.</p>
+  <p>Ce lien n'est plus valide. Contactez le partenaire.</p>
 </div>
 </body>
 </html>"""

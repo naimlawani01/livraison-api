@@ -1,6 +1,6 @@
 # 📦 Backend - Plateforme de Livraison
 
-Backend FastAPI pour la plateforme de livraison connectant restaurants et livreurs (taxis-motos).
+Backend FastAPI pour la plateforme de livraison connectant partenaires (commerces) et livreurs (taxis-motos).
 
 ## 🚀 Installation
 
@@ -76,9 +76,10 @@ backend/
 │   │   └── v1/
 │   │       ├── endpoints/      # Routes API
 │   │       │   ├── auth.py
-│   │       │   ├── restaurants.py
+│   │       │   ├── partenaires.py
 │   │       │   ├── livreurs.py
 │   │       │   ├── commandes.py
+│   │       │   ├── tracking.py
 │   │       │   └── admin.py
 │   │       └── api.py          # Router principal
 │   ├── core/
@@ -87,12 +88,12 @@ backend/
 │   │   └── database.py         # Connexion DB
 │   ├── models/                 # Modèles SQLAlchemy
 │   │   ├── user.py
-│   │   ├── restaurant.py
+│   │   ├── partenaire.py
 │   │   ├── livreur.py
 │   │   └── commande.py
 │   ├── schemas/                # Schémas Pydantic
 │   │   ├── user.py
-│   │   ├── restaurant.py
+│   │   ├── partenaire.py
 │   │   ├── livreur.py
 │   │   └── commande.py
 │   ├── services/               # Logique métier
@@ -117,11 +118,11 @@ backend/
 - `POST /api/v1/auth/verify-otp` - Vérifier OTP et connexion
 - `POST /api/v1/auth/login` - Connexion classique
 
-### Restaurants
+### Partenaires
 
-- `POST /api/v1/restaurants/` - Créer profil restaurant
-- `GET /api/v1/restaurants/me` - Mon profil
-- `PATCH /api/v1/restaurants/me` - Mettre à jour profil
+- `POST /api/v1/partenaires/` - Créer profil partenaire
+- `GET /api/v1/partenaires/me` - Mon profil
+- `PATCH /api/v1/partenaires/me` - Mettre à jour profil
 
 ### Livreurs
 
@@ -132,12 +133,12 @@ backend/
 
 ### Commandes
 
-- `POST /api/v1/commandes/` - Créer commande (restaurant)
-- `GET /api/v1/commandes/me` - Mes commandes (restaurant)
+- `POST /api/v1/commandes/` - Créer commande (partenaire)
+- `GET /api/v1/commandes/me` - Mes commandes (partenaire)
 - `GET /api/v1/commandes/livreur/disponibles` - Courses disponibles (livreur)
 - `POST /api/v1/commandes/{id}/accepter` - Accepter course (livreur)
 - `PATCH /api/v1/commandes/{id}/statut` - Changer statut (livreur)
-- `POST /api/v1/commandes/{id}/evaluer` - Évaluer livreur (restaurant)
+- `POST /api/v1/commandes/{id}/evaluer` - Évaluer livreur (partenaire)
 
 ### Admin
 
@@ -150,7 +151,7 @@ backend/
 
 Endpoint temps réel: `ws://localhost:8000/ws/{user_id}/{user_type}`
 
-Types d'utilisateurs: `restaurant`, `livreur`, `admin`
+Types côté WebSocket: `partenaire`, `livreur`, `admin`
 
 ### Messages WebSocket
 

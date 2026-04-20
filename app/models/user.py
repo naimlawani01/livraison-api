@@ -9,7 +9,7 @@ from ..core.database import Base
 class UserRole(str, enum.Enum):
     """Rôles des utilisateurs"""
     ADMIN = "admin"
-    RESTAURANT = "restaurant"
+    PARTENAIRE = "partenaire"
     LIVREUR = "livreur"
 
 

@@ -11,6 +11,11 @@ class CommandeBase(BaseModel):
     contact_client_nom: str = Field(..., min_length=2, max_length=255)
     contact_client_telephone: str = Field(..., min_length=8, max_length=20)
     instructions_speciales: Optional[str] = None
+    description_colis: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Nature ou description du colis / commande (pour le livreur)",
+    )
 
 
 class CommandeCreate(CommandeBase):
@@ -19,6 +24,7 @@ class CommandeCreate(CommandeBase):
     longitude_client: Optional[float] = Field(None, ge=-180, le=180)
     prix_propose: float = Field(..., gt=0, description="Prix proposé pour la livraison")
     mode_paiement: ModePaiement = Field(default=ModePaiement.CASH, description="Mode de paiement")
+    exige_code_livraison: Optional[bool] = Field(default=False, description="Exiger un code PIN à la livraison")
 
 
 class CommandeUpdate(BaseModel):
@@ -41,7 +47,7 @@ class CommandeResponse(CommandeBase):
     """Réponse commande"""
     id: UUID
     numero_commande: str
-    restaurant_id: UUID
+    partenaire_id: UUID
     livreur_id: Optional[UUID]
     latitude_client: Optional[float]
     longitude_client: Optional[float]
@@ -50,6 +56,7 @@ class CommandeResponse(CommandeBase):
     montant_livreur: float
     mode_paiement: ModePaiement
     paiement_confirme: str
+    exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]
     status: CommandeStatus
@@ -72,13 +79,14 @@ class CommandeResponse(CommandeBase):
 
 
 class CommandeWithDetails(CommandeResponse):
-    """Commande avec détails restaurant et livreur"""
-    restaurant: Optional[dict] = None
+    """Commande avec détails partenaire et livreur"""
+    partenaire: Optional[dict] = None
     livreur: Optional[dict] = None
+    code_livraison: Optional[str] = None
 
 
-class RestaurantInfo(BaseModel):
-    """Infos restaurant pour les courses disponibles"""
+class PartenaireInfo(BaseModel):
+    """Infos partenaire pour les courses disponibles"""
     id: UUID
     nom: str
     adresse: str
@@ -90,16 +98,17 @@ class RestaurantInfo(BaseModel):
 
 
 class CommandeDisponibleResponse(BaseModel):
-    """Commande disponible avec infos restaurant et distance depuis le livreur"""
+    """Commande disponible avec infos partenaire et distance depuis le livreur"""
     id: UUID
     numero_commande: str
-    restaurant_id: UUID
+    partenaire_id: UUID
     adresse_client: Optional[str] = None
     latitude_client: Optional[float] = None
     longitude_client: Optional[float] = None
     contact_client_nom: str
     contact_client_telephone: str
     instructions_speciales: Optional[str] = None
+    description_colis: Optional[str] = None
     prix_propose: float
     commission_plateforme: float
     montant_livreur: float
@@ -109,14 +118,15 @@ class CommandeDisponibleResponse(BaseModel):
     created_at: datetime
     mode_paiement: Optional[str] = "CASH"
     paiement_confirme: Optional[str] = "non"
+    exige_code_livraison: bool
     
-    # Infos restaurant
-    restaurant_nom: str
-    restaurant_adresse: str
-    restaurant_latitude: float
-    restaurant_longitude: float
+    # Infos partenaire
+    partenaire_nom: str
+    partenaire_adresse: str
+    partenaire_latitude: float
+    partenaire_longitude: float
     
-    # Distance livreur -> restaurant
+    # Distance livreur -> partenaire
     distance_livreur_km: Optional[float] = None
     duree_livreur_minutes: Optional[int] = None
     

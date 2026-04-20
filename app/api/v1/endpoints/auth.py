@@ -200,6 +200,56 @@ async def login(
     )
 
 
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    body: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Rafraîchir le token d'accès à partir d'un refresh token valide"""
+    from ....core.security import decode_token
+
+    refresh_token = body.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="refresh_token requis"
+        )
+
+    try:
+        payload = decode_token(refresh_token)
+    except HTTPException:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token invalide ou expiré, veuillez vous reconnecter"
+        )
+
+    if payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide (type incorrect)"
+        )
+
+    user_id = payload.get("sub")
+    query = select(User).where(User.id == user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Utilisateur introuvable ou désactivé"
+        )
+
+    new_access_token = create_access_token({"sub": str(user.id), "role": user.role})
+    new_refresh_token = create_refresh_token({"sub": str(user.id)})
+
+    return TokenResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        user=UserResponse.model_validate(user)
+    )
+
+
 @router.post("/device-token")
 async def update_device_token(
     token_data: DeviceTokenUpdate,

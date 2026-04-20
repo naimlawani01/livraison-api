@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+echo "=== Initializing database ==="
+python scripts/init_db.py
+
 echo "=== Running Alembic migrations ==="
 alembic upgrade head
 

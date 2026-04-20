@@ -6,7 +6,7 @@ from datetime import datetime
 from ....core.database import get_db
 from ....core.config import settings
 from ....models.commande import Commande, CommandeStatus
-from ....models.restaurant import Restaurant
+from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
 from ....models.user import User
 from ....schemas.commande import (
@@ -20,7 +20,7 @@ from ....schemas.commande import (
 from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
 from ....services.notification_service import notification_service
-from ....utils.dependencies import get_current_restaurant, get_current_livreur, get_current_user
+from ....utils.dependencies import get_current_partenaire, get_current_livreur, get_current_user
 import logging
 import secrets
 
@@ -40,14 +40,14 @@ router = APIRouter()
 @router.post("/estimer-prix")
 async def estimer_prix(
     data: dict,  # {adresse_client: str, latitude_client: float, longitude_client: float}
-    restaurant: Restaurant = Depends(get_current_restaurant),
+    partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
     """Estimer le prix de livraison en fonction de la distance"""
-    if not restaurant.is_verified:
+    if not partenaire.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre restaurant doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre partenaire doit être vérifié par un administrateur avant de pouvoir créer des commandes"
         )
 
     lat = data.get("latitude_client")
@@ -58,7 +58,7 @@ async def estimer_prix(
 
     # Calculer la distance
     distance_km = GeolocationService.calculer_distance(
-        (restaurant.latitude, restaurant.longitude),
+        (partenaire.latitude, partenaire.longitude),
         (lat, lng)
     )
     duree = GeolocationService.estimer_duree_trajet(distance_km)
@@ -84,14 +84,14 @@ async def estimer_prix(
 @router.post("/", response_model=CommandeResponse, status_code=status.HTTP_201_CREATED)
 async def create_commande(
     commande_data: CommandeCreate,
-    restaurant: Restaurant = Depends(get_current_restaurant),
+    partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
     """Créer une nouvelle commande de livraison"""
-    if not restaurant.is_verified:
+    if not partenaire.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre restaurant doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre partenaire doit être vérifié par un administrateur avant de pouvoir créer des commandes"
         )
 
     # Calculer la commission
@@ -105,21 +105,25 @@ async def create_commande(
     
     if commande_data.latitude_client and commande_data.longitude_client:
         distance_km = GeolocationService.calculer_distance(
-            (restaurant.latitude, restaurant.longitude),
+            (partenaire.latitude, partenaire.longitude),
             (commande_data.latitude_client, commande_data.longitude_client)
         )
         duree_estimee = GeolocationService.estimer_duree_trajet(distance_km)
     
+    import random
+    code_livraison = str(random.randint(1000, 9999)) if commande_data.exige_code_livraison else None
+    
     # Créer la commande
     commande = Commande(
         numero_commande=Commande.generer_numero_commande(),
-        restaurant_id=restaurant.id,
+        partenaire_id=partenaire.id,
         adresse_client=commande_data.adresse_client,
         latitude_client=commande_data.latitude_client,
         longitude_client=commande_data.longitude_client,
         contact_client_nom=commande_data.contact_client_nom,
         contact_client_telephone=commande_data.contact_client_telephone,
         instructions_speciales=commande_data.instructions_speciales,
+        description_colis=commande_data.description_colis,
         prix_propose=commande_data.prix_propose,
         commission_plateforme=commission,
         montant_livreur=montant_livreur,
@@ -128,6 +132,8 @@ async def create_commande(
         duree_estimee_minutes=duree_estimee,
         status=CommandeStatus.CREEE,
         tracking_token=secrets.token_urlsafe(32),
+        exige_code_livraison=commande_data.exige_code_livraison,
+        code_livraison=code_livraison,
     )
     
     db.add(commande)
@@ -138,8 +144,8 @@ async def create_commande(
     await MatchingService.diffuser_commande(
         db,
         commande,
-        restaurant.latitude,
-        restaurant.longitude
+        partenaire.latitude,
+        partenaire.longitude
     )
     
     # Refresh pour retourner le statut DIFFUSEE au client
@@ -150,12 +156,12 @@ async def create_commande(
 
 @router.get("/me", response_model=List[CommandeResponse])
 async def get_my_commandes(
-    restaurant: Restaurant = Depends(get_current_restaurant),
+    partenaire: Partenaire = Depends(get_current_partenaire),
     status_filter: str = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir mes commandes (restaurant)"""
-    query = select(Commande).where(Commande.restaurant_id == restaurant.id)
+    """Obtenir mes commandes (partenaire)"""
+    query = select(Commande).where(Commande.partenaire_id == partenaire.id)
     
     if status_filter:
         query = query.where(Commande.status == status_filter)
@@ -197,20 +203,20 @@ async def get_commandes_disponibles(
 
     commandes_proches = []
     for commande in commandes:
-        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-        restaurant_result = await db.execute(restaurant_query)
-        restaurant = restaurant_result.scalar_one_or_none()
+        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        partenaire_result = await db.execute(partenaire_query)
+        partenaire = partenaire_result.scalar_one_or_none()
 
-        if not restaurant:
+        if not partenaire:
             continue
 
         distance_livreur = None
         duree_livreur = None
 
-        if has_position and restaurant.latitude and restaurant.longitude:
+        if has_position and partenaire.latitude and partenaire.longitude:
             distance_livreur = GeolocationService.calculer_distance(
                 (livreur_lat, livreur_lon),
-                (restaurant.latitude, restaurant.longitude)
+                (partenaire.latitude, partenaire.longitude)
             )
             if distance_livreur > rayon:
                 continue
@@ -219,13 +225,14 @@ async def get_commandes_disponibles(
         commandes_proches.append(CommandeDisponibleResponse(
             id=commande.id,
             numero_commande=commande.numero_commande,
-            restaurant_id=commande.restaurant_id,
+            partenaire_id=commande.partenaire_id,
             adresse_client=commande.adresse_client,
             latitude_client=commande.latitude_client,
             longitude_client=commande.longitude_client,
             contact_client_nom=commande.contact_client_nom,
             contact_client_telephone=commande.contact_client_telephone,
             instructions_speciales=commande.instructions_speciales,
+            description_colis=commande.description_colis,
             prix_propose=commande.prix_propose,
             commission_plateforme=commande.commission_plateforme,
             montant_livreur=commande.montant_livreur,
@@ -235,10 +242,11 @@ async def get_commandes_disponibles(
             created_at=commande.created_at,
             mode_paiement=commande.mode_paiement,
             paiement_confirme=commande.paiement_confirme,
-            restaurant_nom=restaurant.nom,
-            restaurant_adresse=restaurant.adresse,
-            restaurant_latitude=restaurant.latitude,
-            restaurant_longitude=restaurant.longitude,
+            exige_code_livraison=commande.exige_code_livraison,
+            partenaire_nom=partenaire.nom,
+            partenaire_adresse=partenaire.adresse,
+            partenaire_latitude=partenaire.latitude,
+            partenaire_longitude=partenaire.longitude,
             distance_livreur_km=round(distance_livreur, 2) if distance_livreur is not None else None,
             duree_livreur_minutes=duree_livreur,
         ))
@@ -330,13 +338,13 @@ async def accepter_commande(
     
     await db.refresh(commande)
     
-    # Notifier le restaurant que sa commande a été acceptée
+    # Notifier le partenaire que sa commande a été acceptée
     try:
-        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-        restaurant_result = await db.execute(restaurant_query)
-        resto = restaurant_result.scalar_one_or_none()
-        if resto:
-            token = await _get_user_device_token(db, resto.user_id)
+        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        partenaire_result = await db.execute(partenaire_query)
+        partenaire_notif = partenaire_result.scalar_one_or_none()
+        if partenaire_notif:
+            token = await _get_user_device_token(db, partenaire_notif.user_id)
             if token:
                 await notification_service.notifier_commande_acceptee(
                     device_token=token,
@@ -353,6 +361,7 @@ async def accepter_commande(
 async def update_commande_status(
     commande_id: str,
     nouveau_statut: CommandeStatus,
+    code_livraison: Optional[str] = None,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
@@ -378,6 +387,12 @@ async def update_commande_status(
     elif nouveau_statut == CommandeStatus.EN_LIVRAISON:
         pass  # Déjà en route
     elif nouveau_statut == CommandeStatus.TERMINEE:
+        if commande.exige_code_livraison:
+            if not code_livraison or code_livraison != commande.code_livraison:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Code de livraison invalide ou manquant"
+                )
         commande.livree_at = datetime.utcnow()
         livreur.nombre_courses_completees += 1
         livreur.solde_disponible += commande.montant_livreur
@@ -399,13 +414,13 @@ async def update_commande_status(
     await db.commit()
     await db.refresh(commande)
     
-    # Notifier le restaurant du changement de statut
+    # Notifier le partenaire du changement de statut
     try:
-        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-        restaurant_result = await db.execute(restaurant_query)
-        resto = restaurant_result.scalar_one_or_none()
-        if resto:
-            token = await _get_user_device_token(db, resto.user_id)
+        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        partenaire_result = await db.execute(partenaire_query)
+        partenaire_notif = partenaire_result.scalar_one_or_none()
+        if partenaire_notif:
+            token = await _get_user_device_token(db, partenaire_notif.user_id)
             if token:
                 await notification_service.notifier_changement_status(
                     device_token=token,
@@ -424,7 +439,7 @@ async def annuler_commande(
     annulation: CommandeAnnulation,
     db: AsyncSession = Depends(get_db)
 ):
-    """Annuler une commande (restaurant ou livreur)"""
+    """Annuler une commande (partenaire ou livreur)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -467,7 +482,7 @@ async def annuler_commande(
     await db.commit()
     await db.refresh(commande)
     
-    # Notifier le livreur (si assigné) et le restaurant de l'annulation
+    # Notifier le livreur (si assigné) et le partenaire de l'annulation
     try:
         # Notifier le livreur
         if commande.livreur_id:
@@ -482,12 +497,12 @@ async def annuler_commande(
                         status="ANNULEE",
                         numero_commande=commande.numero_commande,
                     )
-        # Notifier le restaurant
-        resto_q = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-        resto_r = await db.execute(resto_q)
-        resto = resto_r.scalar_one_or_none()
-        if resto:
-            token = await _get_user_device_token(db, resto.user_id)
+        # Notifier le partenaire
+        partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        partenaire_r = await db.execute(partenaire_q)
+        partenaire_notif = partenaire_r.scalar_one_or_none()
+        if partenaire_notif:
+            token = await _get_user_device_token(db, partenaire_notif.user_id)
             if token:
                 await notification_service.notifier_changement_status(
                     device_token=token,
@@ -504,13 +519,13 @@ async def annuler_commande(
 async def evaluer_livreur(
     commande_id: str,
     evaluation: CommandeEvaluation,
-    restaurant: Restaurant = Depends(get_current_restaurant),
+    partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
-    """Évaluer le livreur après livraison (restaurant)"""
+    """Évaluer le livreur après livraison (partenaire)"""
     query = select(Commande).where(
         Commande.id == commande_id,
-        Commande.restaurant_id == restaurant.id,
+        Commande.partenaire_id == partenaire.id,
         Commande.status == CommandeStatus.TERMINEE
     )
     result = await db.execute(query)
@@ -588,18 +603,18 @@ async def get_commande_details(
             detail="Commande non trouvée"
         )
     
-    # Récupérer les détails restaurant et livreur
+    # Récupérer les détails partenaire et livreur
     response_dict = CommandeResponse.model_validate(commande).model_dump()
     
-    # Ajouter le restaurant
-    if commande.restaurant_id:
-        restaurant_query = select(Restaurant).where(Restaurant.id == commande.restaurant_id)
-        restaurant_result = await db.execute(restaurant_query)
-        restaurant = restaurant_result.scalar_one_or_none()
-        if restaurant:
-            response_dict["restaurant"] = {
-                "nom": restaurant.nom,
-                "adresse": restaurant.adresse
+    # Ajouter le partenaire
+    if commande.partenaire_id:
+        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        partenaire_result = await db.execute(partenaire_query)
+        partenaire = partenaire_result.scalar_one_or_none()
+        if partenaire:
+            response_dict["partenaire"] = {
+                "nom": partenaire.nom,
+                "adresse": partenaire.adresse
             }
     
     # Ajouter le livreur

@@ -1,19 +1,28 @@
-from sqlalchemy import Column, String, Float, Integer, ForeignKey, Boolean, JSON, DateTime
+from sqlalchemy import Column, String, Float, Integer, ForeignKey, Boolean, JSON, DateTime, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
+import enum
 from ..core.database import Base
 
+class TypePartenaire(str, enum.Enum):
+    RESTAURANT = "restaurant"
+    PHARMACIE = "pharmacie"
+    SUPERMARCHE = "supermarche"
+    B2B = "b2b"
+    AUTRE = "autre"
 
-class Restaurant(Base):
-    """Modèle pour les restaurants/commerçants"""
-    __tablename__ = "restaurants"
+
+class Partenaire(Base):
+    """Modèle pour les partenaires/commerçants"""
+    __tablename__ = "partenaires"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     
-    # Informations du restaurant
+    # Informations du partenaire
+    type_partenaire = Column(SQLEnum(TypePartenaire), default=TypePartenaire.AUTRE, nullable=False)
     nom = Column(String(255), nullable=False)
     description = Column(String(1000), nullable=True)
     adresse = Column(String(500), nullable=False)
@@ -26,7 +35,7 @@ class Restaurant(Base):
     email = Column(String(255), nullable=True)
     telephone_secondaire = Column(String(20), nullable=True)
     
-    # Horaires (format JSON: {"lundi": {"ouvert": true, "debut": "08:00", "fin": "22:00"}})
+    # Horaires (format JSON)
     horaires = Column(JSON, nullable=True)
     
     # Statut
@@ -42,8 +51,8 @@ class Restaurant(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relations
-    user = relationship("User", backref="restaurant", uselist=False)
-    commandes = relationship("Commande", back_populates="restaurant", cascade="all, delete-orphan")
+    user = relationship("User", backref="partenaire", uselist=False)
+    commandes = relationship("Commande", back_populates="partenaire", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<Restaurant {self.nom}>"
+        return f"<Partenaire {self.nom} ({self.type_partenaire})>"

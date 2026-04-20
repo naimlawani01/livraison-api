@@ -80,6 +80,11 @@ async def update_my_profile(
     return livreur
 
 
+from ....core.redis import redis_client
+import logging
+
+logger = logging.getLogger(__name__)
+
 @router.patch("/me/location", response_model=LivreurResponse)
 async def update_my_location(
     location_data: LivreurLocationUpdate,
@@ -87,12 +92,36 @@ async def update_my_location(
     db: AsyncSession = Depends(get_db)
 ):
     """Mettre à jour ma position GPS"""
-    livreur.latitude = location_data.latitude
-    livreur.longitude = location_data.longitude
-    livreur.derniere_position_maj = datetime.utcnow()
+    # 1. Toujours mettre à jour le Cache Rapide Redis (Temps réel)
+    try:
+        # geoadd prend un tuple (longitude, latitude, nom)
+        await redis_client.geoadd(
+            "livreurs_locations",
+            (location_data.longitude, location_data.latitude, str(livreur.id))
+        )
+    except Exception as e:
+        logger.warning(f"Impossible de mettre à jour le cache GPS Redis : {e}")
+
+    # 2. Sauvegarder dans PostgreSQL seulement toutes les 2 minutes pour protéger la base
+    now = datetime.utcnow()
+    do_postgres_update = True
     
-    await db.commit()
-    await db.refresh(livreur)
+    if livreur.derniere_position_maj:
+        delta = (now - livreur.derniere_position_maj).total_seconds()
+        if delta < 120:  # Moins de 2 minutes
+            do_postgres_update = False
+            
+    if do_postgres_update:
+        livreur.latitude = location_data.latitude
+        livreur.longitude = location_data.longitude
+        livreur.derniere_position_maj = now
+        
+        await db.commit()
+        await db.refresh(livreur)
+    else:
+        # Mettre l'objet à jour en mémoire pour la réponse sans commit
+        livreur.latitude = location_data.latitude
+        livreur.longitude = location_data.longitude
     
     return livreur
 

@@ -34,7 +34,6 @@ twilio==8.11.1
 
 # Redis for caching
 redis==5.0.1
-aioredis==2.0.1
 
 # Monitoring & Logging
 python-json-logger==2.0.7

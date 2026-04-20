@@ -111,13 +111,13 @@ class NotificationService:
         self,
         device_tokens: List[str],
         numero_commande: str,
-        restaurant_nom: str,
+        partenaire_nom: str,
         prix: float,
         distance_km: float
     ):
         """Notifier les livreurs d'une nouvelle commande disponible"""
         titre = "Nouvelle course disponible"
-        msg = f"{restaurant_nom} — {prix:.0f} FCFA — {distance_km:.1f} km"
+        msg = f"{partenaire_nom} — {prix:.0f} FCFA — {distance_km:.1f} km"
         data = {"type": "nouvelle_commande", "numero_commande": numero_commande}
         
         count = await self.envoyer_a_plusieurs(device_tokens, titre, msg, data)
@@ -129,7 +129,7 @@ class NotificationService:
         livreur_nom: str,
         numero_commande: str
     ):
-        """Notifier le restaurant que sa commande a été acceptée"""
+        """Notifier le partenaire que sa commande a été acceptée"""
         titre = "Course acceptée"
         msg = f"{livreur_nom} a accepté la course #{numero_commande}"
         data = {"type": "commande_acceptee", "numero_commande": numero_commande}
@@ -144,7 +144,7 @@ class NotificationService:
     ):
         """Notifier un changement de statut de commande"""
         status_messages = {
-            "EN_RECUPERATION": "Le livreur arrive au restaurant",
+            "EN_RECUPERATION": "Le livreur arrive au partenaire",
             "EN_LIVRAISON": "Le livreur est en route vers le client",
             "TERMINEE": "Livraison terminée avec succès",
             "ANNULEE": "Livraison annulée"

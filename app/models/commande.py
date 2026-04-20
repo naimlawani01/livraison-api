@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Enum as SQLEnum, Integer
+from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Enum as SQLEnum, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -32,7 +32,7 @@ class Commande(Base):
     numero_commande = Column(String(50), unique=True, nullable=False, index=True)
     
     # Relations
-    restaurant_id = Column(UUID(as_uuid=True), ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
+    partenaire_id = Column(UUID(as_uuid=True), ForeignKey("partenaires.id", ondelete="CASCADE"), nullable=False)
     livreur_id = Column(UUID(as_uuid=True), ForeignKey("livreurs.id", ondelete="SET NULL"), nullable=True)
     
     # Informations de livraison
@@ -45,6 +45,12 @@ class Commande(Base):
     
     # Instructions
     instructions_speciales = Column(Text, nullable=True)
+    # Contenu à livrer (visible par le livreur)
+    description_colis = Column(Text, nullable=True)
+    
+    # Sécurité de livraison
+    exige_code_livraison = Column(Boolean, default=False, nullable=False)
+    code_livraison = Column(String(10), nullable=True)
     
     # Lien de localisation client
     location_token = Column(String(64), unique=True, nullable=True, index=True)
@@ -86,7 +92,7 @@ class Commande(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relations
-    restaurant = relationship("Restaurant", back_populates="commandes")
+    partenaire = relationship("Partenaire", back_populates="commandes")
     livreur = relationship("Livreur", back_populates="commandes")
     
     def __repr__(self):

@@ -1,12 +1,16 @@
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
+import json
+import logging
+
 from ..models.commande import Commande, CommandeStatus
 from ..models.livreur import Livreur
+from ..schemas.commande import CommandeResponse
 from ..services.geolocation_service import GeolocationService
 from ..services.notification_service import notification_service
 from ..core.config import settings
-import logging
+from ..core.redis import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +22,8 @@ class MatchingService:
     async def diffuser_commande(
         db: AsyncSession,
         commande: Commande,
-        restaurant_latitude: float,
-        restaurant_longitude: float
+        partenaire_latitude: float,
+        partenaire_longitude: float
     ) -> int:
         """
         Diffuser une commande aux livreurs proches.
@@ -29,8 +33,8 @@ class MatchingService:
         Args:
             db: Session de base de données
             commande: Commande à diffuser
-            restaurant_latitude: Latitude du restaurant
-            restaurant_longitude: Longitude du restaurant
+            partenaire_latitude: Latitude du partenaire
+            partenaire_longitude: Longitude du partenaire
             
         Returns:
             Nombre de livreurs notifiés
@@ -43,27 +47,41 @@ class MatchingService:
         # Trouver les livreurs proches pour les notifier
         livreurs_proches = await GeolocationService.trouver_livreurs_proches(
             db,
-            restaurant_latitude,
-            restaurant_longitude,
+            partenaire_latitude,
+            partenaire_longitude,
             settings.DEFAULT_SEARCH_RADIUS_KM
         )
         
+        # Diffuser en Temps Réel via Redis PubSub (pour le WebSocket admin et livreurs)
+        try:
+            commande_data = CommandeResponse.model_validate(commande).model_dump(mode='json')
+            await redis_client.publish("livraison_ws", json.dumps({
+                "target": "livreurs",
+                "payload": {
+                    "type": "nouvelle_commande",
+                    "data": commande_data
+                }
+            }))
+            logger.info(f"Commande {commande.numero_commande} publiée sur Redis PubSub")
+        except Exception as e:
+            logger.error(f"Erreur publication Redis: {e}")
+            
         if not livreurs_proches:
-            logger.info(f"Commande {commande.numero_commande} diffusée (aucun livreur à proximité pour le moment)")
+            logger.info(f"Commande {commande.numero_commande} diffusée (aucun livreur à proximité pour le FCM)")
             return 0
         
         # Collecter les tokens pour notification push
         device_tokens = []
         for livreur, distance in livreurs_proches:
-            if livreur.device_token:
+            if hasattr(livreur, 'device_token') and livreur.device_token:
                 device_tokens.append(livreur.device_token)
         
-        # Envoyer les notifications
+        # Envoyer les notifications Push Firebase
         if device_tokens:
             await notification_service.notifier_nouvelle_commande(
                 device_tokens=device_tokens,
                 numero_commande=commande.numero_commande,
-                restaurant_nom="Restaurant",
+                partenaire_nom="Partenaire",
                 prix=commande.prix_propose,
                 distance_km=livreurs_proches[0][1] if livreurs_proches else 0
             )
@@ -110,8 +128,8 @@ class MatchingService:
         
         await db.commit()
         
-        # Notifier le restaurant
-        # Note: Implémenter la récupération du device_token du restaurant
+        # Notifier le partenaire
+        # Note: Implémenter la récupération du device_token du partenaire
         logger.info(f"Commande {commande.numero_commande} acceptée par livreur {livreur.id}")
         
         return True

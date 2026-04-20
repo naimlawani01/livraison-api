@@ -16,19 +16,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import asyncio
+import json
 
-# Gestionnaire de connexions WebSocket
+# Gestionnaire de connexions WebSocket avec Redis Pub/Sub
 class ConnectionManager:
-    """Gestion des connexions WebSocket en temps réel"""
+    """Gestion des connexions WebSocket en temps réel sur plusieurs workers"""
     
     def __init__(self):
-        # Connexions par type d'utilisateur: {user_id: websocket}
+        # Connexions par type d'utilisateur local: {user_id: websocket}
         self.active_connections: Dict[str, WebSocket] = {}
-        # Groupes de livreurs par zone (pour diffusion géolocalisée)
+        # Groupes de livreurs locaux
         self.livreur_connections: Set[str] = set()
+        self.pubsub = None
+        self.redis = None
     
+    async def initialize(self, redis_client):
+        self.redis = redis_client
+        self.pubsub = self.redis.pubsub()
+        await self.pubsub.subscribe("livraison_ws")
+        asyncio.create_task(self._listen_to_redis())
+
+    async def _listen_to_redis(self):
+        """Tâche asynchrone pour recevoir les messages de Redis"""
+        try:
+            async for message in self.pubsub.listen():
+                if message["type"] == "message":
+                    data = json.loads(message["data"])
+                    target = data.get("target")
+                    payload = data.get("payload")
+                    
+                    if target == "livreurs":
+                        await self._local_broadcast_to_livreurs(payload)
+                    elif target.startswith("user:"):
+                        user_id = target.split(":")[1]
+                        await self._local_send_personal_message(user_id, payload)
+        except Exception as e:
+            logger.error(f"Redis PubSub listener error: {e}")
+
     async def connect(self, user_id: str, user_type: str, websocket: WebSocket):
-        """Connecter un utilisateur"""
+        """Connecter un utilisateur localement au worker actuel"""
         await websocket.accept()
         self.active_connections[user_id] = websocket
         
@@ -38,17 +65,13 @@ class ConnectionManager:
         logger.info(f"User {user_id} ({user_type}) connected via WebSocket")
     
     def disconnect(self, user_id: str):
-        """Déconnecter un utilisateur"""
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-        
         if user_id in self.livreur_connections:
             self.livreur_connections.remove(user_id)
-        
         logger.info(f"User {user_id} disconnected")
     
-    async def send_personal_message(self, user_id: str, message: dict):
-        """Envoyer un message à un utilisateur spécifique"""
+    async def _local_send_personal_message(self, user_id: str, message: dict):
         if user_id in self.active_connections:
             websocket = self.active_connections[user_id]
             try:
@@ -56,25 +79,33 @@ class ConnectionManager:
             except Exception as e:
                 logger.error(f"Error sending message to {user_id}: {e}")
                 self.disconnect(user_id)
+
+    async def send_personal_message(self, user_id: str, message: dict):
+        """Publier un message ciblé sur Redis pour atteindre le bon worker"""
+        if self.redis:
+            await self.redis.publish("livraison_ws", json.dumps({
+                "target": f"user:{user_id}",
+                "payload": message
+            }))
     
-    async def broadcast_to_livreurs(self, message: dict, exclude: str = None):
-        """Diffuser un message à tous les livreurs connectés"""
+    async def _local_broadcast_to_livreurs(self, message: dict):
         disconnected = []
-        
         for livreur_id in self.livreur_connections:
-            if exclude and livreur_id == exclude:
-                continue
-            
-            if livreur_id in self.active_connections:
-                try:
-                    await self.active_connections[livreur_id].send_json(message)
-                except Exception as e:
-                    logger.error(f"Error broadcasting to livreur {livreur_id}: {e}")
-                    disconnected.append(livreur_id)
-        
-        # Nettoyer les connexions mortes
+            try:
+                await self.active_connections[livreur_id].send_json(message)
+            except Exception as e:
+                logger.error(f"Error broadcasting to livreur {livreur_id}: {e}")
+                disconnected.append(livreur_id)
         for livreur_id in disconnected:
             self.disconnect(livreur_id)
+
+    async def broadcast_to_livreurs(self, message: dict, exclude: str = None):
+        """Publier un message à tous les livreurs via Redis"""
+        if self.redis:
+            await self.redis.publish("livraison_ws", json.dumps({
+                "target": "livreurs",
+                "payload": message
+            }))
 
 
 manager = ConnectionManager()
@@ -88,12 +119,21 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
+    # Initialize Redis Pub/Sub
+    from .core.redis import redis_client
+    await manager.initialize(redis_client)
+    logger.info("Redis ConnectionManager initialized")
+    
     yield
     
     # Shutdown
     logger.info("Shutting down application...")
     await close_db()
-    logger.info("Database connections closed")
+    
+    if manager.pubsub:
+        await manager.pubsub.close()
+    await redis_client.aclose()
+    logger.info("Redis connections closed")
 
 
 # Créer l'application FastAPI
@@ -155,7 +195,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     """
     Endpoint WebSocket pour les mises à jour en temps réel
     
-    user_type: "restaurant", "livreur", "admin"
+    user_type: "partenaire", "livreur", "admin"
     """
     await manager.connect(user_id, user_type, websocket)
     
@@ -175,7 +215,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
                     "status": "ok"
                 })
             
-            elif data.get("type") == "nouvelle_commande" and user_type == "restaurant":
+            elif data.get("type") == "nouvelle_commande" and user_type == "partenaire":
                 # Diffuser aux livreurs proches
                 await manager.broadcast_to_livreurs({
                     "type": "nouvelle_commande",
