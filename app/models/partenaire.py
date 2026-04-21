@@ -7,11 +7,11 @@ import enum
 from ..core.database import Base
 
 class TypePartenaire(str, enum.Enum):
-    RESTAURANT = "restaurant"
-    PHARMACIE = "pharmacie"
-    SUPERMARCHE = "supermarche"
-    B2B = "b2b"
-    AUTRE = "autre"
+    RESTAURANT = "RESTAURANT"
+    PHARMACIE = "PHARMACIE"
+    SUPERMARCHE = "SUPERMARCHE"
+    B2B = "B2B"
+    AUTRE = "AUTRE"
 
 
 class Partenaire(Base):
