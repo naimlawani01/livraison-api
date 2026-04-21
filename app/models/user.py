@@ -8,9 +8,9 @@ from ..core.database import Base
 
 class UserRole(str, enum.Enum):
     """Rôles des utilisateurs"""
-    ADMIN = "admin"
-    PARTENAIRE = "partenaire"
-    LIVREUR = "livreur"
+    ADMIN = "ADMIN"
+    PARTENAIRE = "PARTENAIRE"
+    LIVREUR = "LIVREUR"
 
 
 class User(Base):
@@ -20,7 +20,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone = Column(String(20), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True)  # Optionnel si OTP uniquement
-    role = Column(SQLEnum(UserRole, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    role = Column(SQLEnum(UserRole), nullable=False)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     
