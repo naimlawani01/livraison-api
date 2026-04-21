@@ -188,6 +188,12 @@ async def get_commandes_disponibles(
             detail="Votre compte doit être vérifié par un administrateur pour voir les courses disponibles"
         )
 
+    if not livreur.is_disponible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vous devez être en ligne pour voir les courses disponibles"
+        )
+
     livreur_lat = lat if lat is not None else livreur.latitude
     livreur_lon = lon if lon is not None else livreur.longitude
     has_position = livreur_lat is not None and livreur_lon is not None
