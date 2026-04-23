@@ -9,6 +9,7 @@ from ....models.commande import Commande, CommandeStatus
 from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
 from ....models.user import User
+from ....models.wallet_transaction import WalletTransaction
 from ....schemas.commande import (
     CommandeCreate,
     CommandeResponse,
@@ -36,14 +37,35 @@ async def _get_user_device_token(db: AsyncSession, user_id) -> Optional[str]:
 
 router = APIRouter()
 
+# ── Multiplicateurs nature du colis ───────────────────────────────────────────
+_MULT_COLIS: dict[str, float] = {
+    "standard":    1.0,
+    "alimentaire": 1.1,
+    "fragile":     1.3,
+    "documents":   0.9,
+    "volumineux":  1.5,
+}
+
+def _mult_heure(heure: int) -> float:
+    """M_heure : créneau normal=1.0, soirée=1.2, nuit=1.5"""
+    if 6 <= heure < 20:
+        return 1.0
+    elif 20 <= heure < 23:
+        return 1.2
+    return 1.5
+
 
 @router.post("/estimer-prix")
 async def estimer_prix(
-    data: dict,  # {adresse_client: str, latitude_client: float, longitude_client: float}
+    data: dict,
     partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
-    """Estimer le prix de livraison en fonction de la distance"""
+    """
+    Estimer le prix selon la formule :
+        P = (P_base + d_km × T_km) × M_colis × M_heure
+    P_base = 10 000 GNF  |  T_km = 1 500 GNF/km
+    """
     if not partenaire.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -52,32 +74,37 @@ async def estimer_prix(
 
     lat = data.get("latitude_client")
     lng = data.get("longitude_client")
-
     if not lat or not lng:
         raise HTTPException(400, detail="Coordonnées du client requises")
 
-    # Calculer la distance
+    nature = str(data.get("nature_colis", "standard")).lower()
+
     distance_km = GeolocationService.calculer_distance(
         (partenaire.latitude, partenaire.longitude),
         (lat, lng)
     )
     duree = GeolocationService.estimer_duree_trajet(distance_km)
 
-    # Prix de base + prix/km
-    prix_base = 500  # 500 FCFA de base
-    prix_par_km = 200  # 200 FCFA/km
-    prix_estime = prix_base + (distance_km * prix_par_km)
-    prix_estime = max(500, round(prix_estime / 100) * 100)  # Arrondi aux 100 FCFA, min 500
+    # Formule : P = (P_base + d × T_km) × M_colis × M_heure
+    P_base  = 10_000
+    T_km    = 1_500
+    M_colis = _MULT_COLIS.get(nature, 1.0)
+    M_heure = _mult_heure(datetime.now().hour)
 
-    commission = prix_estime * (settings.PLATFORM_COMMISSION_PERCENTAGE / 100)
+    prix_brut  = (P_base + distance_km * T_km) * M_colis * M_heure
+    prix_estime = max(10_000, round(prix_brut / 500) * 500)   # arrondi 500 GNF, min 10 000
+
+    commission     = prix_estime * (settings.PLATFORM_COMMISSION_PERCENTAGE / 100)
     montant_livreur = prix_estime - commission
 
     return {
-        "distance_km": round(distance_km, 2),
+        "distance_km":          round(distance_km, 2),
         "duree_estimee_minutes": duree,
-        "prix_estime": prix_estime,
+        "prix_estime":           prix_estime,
         "commission_plateforme": round(commission, 2),
-        "montant_livreur": round(montant_livreur, 2),
+        "montant_livreur":       round(montant_livreur, 2),
+        "multiplicateur_colis":  M_colis,
+        "multiplicateur_heure":  M_heure,
     }
 
 
@@ -401,8 +428,21 @@ async def update_commande_status(
                 )
         commande.livree_at = datetime.utcnow()
         livreur.nombre_courses_completees += 1
+        solde_avant = livreur.solde_disponible
         livreur.solde_disponible += commande.montant_livreur
         livreur.total_gains += commande.montant_livreur
+        # Enregistrer la transaction wallet
+        txn = WalletTransaction(
+            livreur_id=livreur.id,
+            type="credit",
+            montant=commande.montant_livreur,
+            solde_avant=solde_avant,
+            solde_apres=livreur.solde_disponible,
+            description=f"Course #{commande.numero_commande}",
+            commande_id=commande.id,
+            statut="complete",
+        )
+        db.add(txn)
         
         # Vérifier s'il reste d'autres courses actives
         other_active_query = select(func.count()).where(
