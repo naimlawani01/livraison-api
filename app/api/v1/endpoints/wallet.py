@@ -32,6 +32,11 @@ class TransactionOut(BaseModel):
     statut: str
     created_at: str
 
+class RetraitRequest(BaseModel):
+    montant: float = Field(..., gt=0, description="Montant à retirer (> 0)")
+    methode: str = Field(..., description="orange_money | mtn_money | wave")
+    numero_telephone: str = Field(..., min_length=8, max_length=20)
+
 class RechargeRequest(BaseModel):
     montant: float = Field(..., gt=0)
     methode: str = Field(..., description="orange_money | mtn_money | wave")
