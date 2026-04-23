@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 import logging
 from typing import Dict, Set
@@ -158,6 +159,17 @@ Path("uploads/documents").mkdir(parents=True, exist_ok=True)
 
 # Servir les fichiers statiques (documents uploadés)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# Pages légales
+_static_pages = Path("static/pages")
+
+@app.get("/politique-confidentialite", response_class=HTMLResponse, include_in_schema=False)
+async def politique_confidentialite():
+    return (_static_pages / "politique-confidentialite.html").read_text(encoding="utf-8")
+
+@app.get("/conditions-utilisation", response_class=HTMLResponse, include_in_schema=False)
+async def conditions_utilisation():
+    return (_static_pages / "conditions-utilisation.html").read_text(encoding="utf-8")
 
 # Inclure les routes API
 app.include_router(api_router, prefix=settings.API_PREFIX)
