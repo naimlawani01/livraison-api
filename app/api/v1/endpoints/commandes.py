@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from ....core.database import get_db
 from ....core.config import settings
-from ....models.commande import Commande, CommandeStatus
+from ....models.commande import Commande, CommandeStatus, ModePaiement
 from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
 from ....models.user import User
@@ -343,6 +343,17 @@ async def accepter_commande(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Vous devez être en ligne pour accepter une course"
         )
+
+    # Pour les courses en espèces, vérifier que le wallet couvre la commission
+    if commande.mode_paiement == ModePaiement.CASH:
+        if livreur.solde_disponible < commande.commission_plateforme:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Solde insuffisant pour accepter cette course en espèces. "
+                       f"Commission requise : {commande.commission_plateforme:.0f} GNF. "
+                       f"Votre solde : {livreur.solde_disponible:.0f} GNF. "
+                       f"Rechargez votre wallet."
+            )
     
     # Compter les courses actives du livreur
     active_statuses = [CommandeStatus.ACCEPTEE, CommandeStatus.EN_RECUPERATION, CommandeStatus.EN_LIVRAISON]
@@ -428,21 +439,38 @@ async def update_commande_status(
                 )
         commande.livree_at = datetime.utcnow()
         livreur.nombre_courses_completees += 1
+        livreur.total_gains += commande.montant_livreur  # gains totaux toujours comptés
+
         solde_avant = livreur.solde_disponible
-        livreur.solde_disponible += commande.montant_livreur
-        livreur.total_gains += commande.montant_livreur
-        # Enregistrer la transaction wallet
-        txn = WalletTransaction(
-            livreur_id=livreur.id,
-            type="credit",
-            montant=commande.montant_livreur,
-            solde_avant=solde_avant,
-            solde_apres=livreur.solde_disponible,
-            description=f"Course #{commande.numero_commande}",
-            commande_id=commande.id,
-            statut="complete",
-        )
-        db.add(txn)
+
+        if commande.mode_paiement == ModePaiement.MOBILE_MONEY:
+            # La plateforme a encaissé → reverse le montant livreur sur le wallet
+            livreur.solde_disponible += commande.montant_livreur
+            txn = WalletTransaction(
+                livreur_id=livreur.id,
+                type="credit",
+                montant=commande.montant_livreur,
+                solde_avant=solde_avant,
+                solde_apres=livreur.solde_disponible,
+                description=f"Course #{commande.numero_commande} (Mobile Money)",
+                commande_id=commande.id,
+                statut="complete",
+            )
+            db.add(txn)
+        else:
+            # CASH : le livreur a encaissé lui-même → on lui débite la commission plateforme
+            livreur.solde_disponible -= commande.commission_plateforme
+            txn = WalletTransaction(
+                livreur_id=livreur.id,
+                type="commission",
+                montant=commande.commission_plateforme,
+                solde_avant=solde_avant,
+                solde_apres=livreur.solde_disponible,
+                description=f"Commission course #{commande.numero_commande} (Espèces)",
+                commande_id=commande.id,
+                statut="complete",
+            )
+            db.add(txn)
         
         # Vérifier s'il reste d'autres courses actives
         other_active_query = select(func.count()).where(
@@ -455,7 +483,7 @@ async def update_commande_status(
         
         if other_count == 0:
             livreur.is_en_course = False
-            livreur.is_disponible = True
+            # is_disponible reste inchangé : le livreur décide lui-même de se remettre en ligne
     
     await db.commit()
     await db.refresh(commande)

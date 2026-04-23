@@ -32,10 +32,11 @@ class TransactionOut(BaseModel):
     statut: str
     created_at: str
 
-class RetraitRequest(BaseModel):
-    montant: float = Field(..., gt=0, description="Montant à retirer (> 0)")
+class RechargeRequest(BaseModel):
+    montant: float = Field(..., gt=0)
     methode: str = Field(..., description="orange_money | mtn_money | wave")
     numero_telephone: str = Field(..., min_length=8, max_length=20)
+    reference_transaction: str = Field(..., min_length=3, description="Référence de la transaction Mobile Money")
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,44 @@ async def get_transactions(
             }
             for t in transactions
         ],
+    }
+
+
+@router.post("/me/wallet/recharge", status_code=status.HTTP_201_CREATED)
+async def demander_recharge(
+    body: RechargeRequest,
+    livreur: Livreur = Depends(get_current_livreur),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Recharge du wallet via Mobile Money.
+    Le livreur soumet la référence de sa transaction — un admin valide ensuite.
+    Le solde n'est crédité qu'après validation.
+    """
+    montant_min = 5_000
+    if body.montant < montant_min:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Montant minimum de recharge : {montant_min} GNF",
+        )
+
+    txn = WalletTransaction(
+        livreur_id=livreur.id,
+        type="recharge",
+        montant=body.montant,
+        solde_avant=livreur.solde_disponible,
+        solde_apres=livreur.solde_disponible,  # inchangé jusqu'à validation admin
+        description=f"Recharge {body.methode} — réf. {body.reference_transaction} — {body.numero_telephone}",
+        statut="en_attente",
+    )
+    db.add(txn)
+    await db.commit()
+
+    return {
+        "message": "Demande de recharge enregistrée. En attente de validation.",
+        "montant": body.montant,
+        "transaction_id": str(txn.id),
+        "statut": "en_attente",
     }
 
 
