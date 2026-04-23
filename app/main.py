@@ -160,8 +160,8 @@ Path("uploads/documents").mkdir(parents=True, exist_ok=True)
 # Servir les fichiers statiques (documents uploadés)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Pages légales
-_static_pages = Path("static/pages")
+# Pages légales — chemin absolu relatif à ce fichier (/app/app/main.py → /app/static/pages/)
+_static_pages = Path(__file__).parent.parent / "static" / "pages"
 
 @app.get("/politique-confidentialite", response_class=HTMLResponse, include_in_schema=False)
 async def politique_confidentialite():

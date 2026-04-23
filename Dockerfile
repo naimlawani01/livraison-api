@@ -17,6 +17,7 @@ COPY alembic/ ./alembic/
 # Copier l'application et les scripts
 COPY ./app ./app
 COPY ./scripts ./scripts
+COPY ./static ./static
 
 # Script de démarrage (migrations + uvicorn)
 COPY start.sh .
