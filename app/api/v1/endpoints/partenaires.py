@@ -80,6 +80,34 @@ async def update_my_partenaire(
     return partenaire
 
 
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_account(
+    partenaire: Partenaire = Depends(get_current_partenaire),
+    db: AsyncSession = Depends(get_db)
+):
+    """Supprimer mon compte (droit à l’effacement RGPD)"""
+    # Anonymiser les données personnelles plutôt que supprimer
+    # pour conserver l’historique des commandes
+    partenaire.nom = "Compte supprimé"
+    partenaire.email = None
+    partenaire.description = None
+    partenaire.adresse = "Anonymisé"
+    partenaire.latitude = 0.0
+    partenaire.longitude = 0.0
+    partenaire.telephone_secondaire = None
+    partenaire.is_open = False
+
+    # Anonymiser le user
+    user_query = select(User).where(User.id == partenaire.user_id)
+    result = await db.execute(user_query)
+    user = result.scalar_one_or_none()
+    if user:
+        user.phone = f"deleted_{partenaire.id}"
+        user.password_hash = "deleted"
+
+    await db.commit()
+
+
 @router.get("/", response_model=List[PartenaireResponse])
 async def list_partenaires(
     skip: int = 0,

@@ -80,6 +80,36 @@ async def update_my_profile(
     return livreur
 
 
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_account(
+    livreur: Livreur = Depends(get_current_livreur),
+    db: AsyncSession = Depends(get_db)
+):
+    """Supprimer mon compte (droit à l’effacement RGPD)"""
+    # Anonymiser les données personnelles plutôt que supprimer
+    # pour conserver l'historique comptable
+    livreur.nom_complet = "Compte supprimé"
+    livreur.email = None
+    livreur.piece_identite_url = None
+    livreur.permis_conduire_url = None
+    livreur.photo_profil_url = None
+    livreur.plaque_immatriculation = None
+    livreur.latitude = None
+    livreur.longitude = None
+    livreur.device_token = None
+    livreur.is_disponible = False
+
+    # Supprimer le user (cascade supprime la session)
+    user_query = select(User).where(User.id == livreur.user_id)
+    result = await db.execute(user_query)
+    user = result.scalar_one_or_none()
+    if user:
+        user.phone = f"deleted_{livreur.id}"
+        user.password_hash = "deleted"
+
+    await db.commit()
+
+
 from ....core.redis import redis_client
 import logging
 

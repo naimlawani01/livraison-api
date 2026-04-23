@@ -54,6 +54,10 @@ class Livreur(Base):
     device_token = Column(String(500), nullable=True)  # Pour notifications push
     preferences = Column(JSON, nullable=True)  # Préférences du livreur
     
+    # Consentement légal
+    consent_accepted_at = Column(DateTime, nullable=True)
+    consent_version = Column(String(10), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

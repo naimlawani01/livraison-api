@@ -46,6 +46,10 @@ class Partenaire(Base):
     note_moyenne = Column(Float, default=0.0)
     nombre_evaluations = Column(Integer, default=0)
     
+    # Consentement légal
+    consent_accepted_at = Column(DateTime, nullable=True)
+    consent_version = Column(String(10), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
