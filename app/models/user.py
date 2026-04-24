@@ -27,7 +27,7 @@ class User(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    last_login = Column(DateTime, nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     
     # OTP
     otp_code = Column(String(6), nullable=True)
