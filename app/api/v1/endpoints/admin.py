@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 from ....core.database import get_db
 from ....models.user import User
 from ....models.partenaire import Partenaire
@@ -117,7 +117,7 @@ async def valider_livreur(
         )
     
     livreur.is_verified = True
-    livreur.verified_at = datetime.utcnow()
+    livreur.verified_at = datetime.now(timezone.utc)
     
     user_query = select(User).where(User.id == livreur.user_id)
     user_result = await db.execute(user_query)

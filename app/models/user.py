@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, DateTime, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import enum
 from ..core.database import Base
@@ -25,8 +25,8 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     last_login = Column(DateTime, nullable=True)
     
     # OTP

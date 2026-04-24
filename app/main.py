@@ -148,7 +148,7 @@ app = FastAPI(
 # Configuration CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.DEBUG else settings.CORS_ORIGINS,  # Allow all in dev
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -208,27 +208,41 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     Endpoint WebSocket pour les mises à jour en temps réel
     
     user_type: "partenaire", "livreur", "admin"
+    Authentification via query param : /ws/{user_id}/{user_type}?token=xxx
     """
+    # Vérifier le JWT avant d'accepter la connexion
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Token manquant")
+        return
+    
+    try:
+        from .core.security import decode_token
+        payload = decode_token(token)
+        token_user_id = payload.get("sub")
+        if token_user_id != user_id:
+            await websocket.close(code=4003, reason="Token ne correspond pas")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Token invalide")
+        return
+    
     await manager.connect(user_id, user_type, websocket)
     
     try:
         while True:
-            # Recevoir les messages du client
             data = await websocket.receive_json()
             
-            # Traiter les messages selon le type
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
             
             elif data.get("type") == "location_update" and user_type == "livreur":
-                # Mise à jour de position du livreur
                 await manager.send_personal_message(user_id, {
                     "type": "location_updated",
                     "status": "ok"
                 })
             
             elif data.get("type") == "nouvelle_commande" and user_type == "partenaire":
-                # Diffuser aux livreurs proches
                 await manager.broadcast_to_livreurs({
                     "type": "nouvelle_commande",
                     "data": data.get("commande")

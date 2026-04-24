@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ....core.database import get_db
 from ....core.security import (
     verify_password,
@@ -53,7 +53,7 @@ async def register(
     # Générer et envoyer OTP
     otp_code = generate_otp()
     user.otp_code = otp_code
-    user.otp_expires_at = datetime.utcnow() + timedelta(minutes=5)
+    user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     
     # En mode DEBUG, auto-vérifier le compte (pas de vrai SMS)
     from ....core.config import settings
@@ -96,7 +96,7 @@ async def request_otp(
     # Générer et envoyer OTP
     otp_code = generate_otp()
     user.otp_code = otp_code
-    user.otp_expires_at = datetime.utcnow() + timedelta(minutes=5)
+    user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     
     await db.commit()
     await sms_service.envoyer_otp(user.phone, otp_code)
@@ -128,7 +128,7 @@ async def verify_otp(
         )
     
     # Vérifier l'expiration
-    if user.otp_expires_at < datetime.utcnow():
+    if user.otp_expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Code OTP expiré"
@@ -138,7 +138,7 @@ async def verify_otp(
     user.is_verified = True
     user.otp_code = None
     user.otp_expires_at = None
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(user)
@@ -185,7 +185,7 @@ async def login(
         )
     
     # Mettre à jour la dernière connexion
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(user)
     

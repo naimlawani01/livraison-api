@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Enum as SQLEnum, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import enum
 from ..core.database import Base
@@ -88,8 +88,8 @@ class Commande(Base):
     raison_annulation = Column(Text, nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Relations
     partenaire = relationship("Partenaire", back_populates="commandes")

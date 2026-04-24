@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 
@@ -41,7 +41,7 @@ class MatchingService:
         """
         # Passer en DIFFUSEE immédiatement (visible pour tous les livreurs)
         commande.status = CommandeStatus.DIFFUSEE
-        commande.diffusee_at = datetime.utcnow()
+        commande.diffusee_at = datetime.now(timezone.utc)
         await db.commit()
         
         # Trouver les livreurs proches pour les notifier
@@ -121,7 +121,7 @@ class MatchingService:
         # Assigner la commande
         commande.livreur_id = livreur.id
         commande.status = CommandeStatus.ACCEPTEE
-        commande.acceptee_at = datetime.utcnow()
+        commande.acceptee_at = datetime.now(timezone.utc)
         
         # Marquer le livreur comme en course
         livreur.is_en_course = True

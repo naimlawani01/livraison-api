@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ....core.database import get_db
 from ....core.config import settings
 from ....models.commande import Commande, CommandeStatus, ModePaiement
 from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
-from ....models.user import User
+from ....models.user import User, UserRole
 from ....models.wallet_transaction import WalletTransaction
 from ....schemas.commande import (
     CommandeCreate,
@@ -26,6 +26,13 @@ import logging
 import secrets
 
 logger = logging.getLogger(__name__)
+
+# ── Machine à états : transitions autorisées ──────────────────────────────────
+TRANSITIONS_VALIDES = {
+    CommandeStatus.ACCEPTEE:        [CommandeStatus.EN_RECUPERATION],
+    CommandeStatus.EN_RECUPERATION: [CommandeStatus.EN_LIVRAISON],
+    CommandeStatus.EN_LIVRAISON:    [CommandeStatus.TERMINEE],
+}
 
 
 async def _get_user_device_token(db: AsyncSession, user_id) -> Optional[str]:
@@ -181,23 +188,35 @@ async def create_commande(
     return commande
 
 
-@router.get("/me", response_model=List[CommandeResponse])
+@router.get("/me")
 async def get_my_commandes(
     partenaire: Partenaire = Depends(get_current_partenaire),
     status_filter: str = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir mes commandes (partenaire)"""
-    query = select(Commande).where(Commande.partenaire_id == partenaire.id)
+    """Obtenir mes commandes (partenaire) — paginé"""
+    base = select(Commande).where(Commande.partenaire_id == partenaire.id)
     
     if status_filter:
-        query = query.where(Commande.status == status_filter)
+        base = base.where(Commande.status == status_filter)
     
-    query = query.order_by(Commande.created_at.desc())
+    # Total
+    count_q = select(func.count()).select_from(base.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+    
+    # Page
+    query = base.order_by(Commande.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(query)
     commandes = result.scalars().all()
     
-    return commandes
+    return {
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit,
+        "commandes": [CommandeResponse.model_validate(c).model_dump() for c in commandes],
+    }
 
 
 @router.get("/livreur/disponibles", response_model=List[CommandeDisponibleResponse])
@@ -225,24 +244,21 @@ async def get_commandes_disponibles(
     livreur_lon = lon if lon is not None else livreur.longitude
     has_position = livreur_lat is not None and livreur_lon is not None
 
-    query = select(Commande).where(
-        or_(
+    # JOIN unique au lieu de N+1 requêtes
+    query = (
+        select(Commande, Partenaire)
+        .join(Partenaire, Commande.partenaire_id == Partenaire.id)
+        .where(or_(
             Commande.status == CommandeStatus.DIFFUSEE,
             Commande.status == CommandeStatus.CREEE
-        )
-    ).order_by(Commande.created_at.desc())
+        ))
+        .order_by(Commande.created_at.desc())
+    )
     result = await db.execute(query)
-    commandes = result.scalars().all()
+    rows = result.all()
 
     commandes_proches = []
-    for commande in commandes:
-        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-        partenaire_result = await db.execute(partenaire_query)
-        partenaire = partenaire_result.scalar_one_or_none()
-
-        if not partenaire:
-            continue
-
+    for commande, partenaire in rows:
         distance_livreur = None
         duree_livreur = None
 
@@ -289,23 +305,35 @@ async def get_commandes_disponibles(
     return commandes_proches
 
 
-@router.get("/livreur/mes-courses", response_model=List[CommandeResponse])
+@router.get("/livreur/mes-courses")
 async def get_mes_courses(
     livreur: Livreur = Depends(get_current_livreur),
     status_filter: str = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir mes courses (livreur)"""
-    query = select(Commande).where(Commande.livreur_id == livreur.id)
+    """Obtenir mes courses (livreur) — paginé"""
+    base = select(Commande).where(Commande.livreur_id == livreur.id)
     
     if status_filter:
-        query = query.where(Commande.status == status_filter)
+        base = base.where(Commande.status == status_filter)
     
-    query = query.order_by(Commande.created_at.desc())
+    # Total
+    count_q = select(func.count()).select_from(base.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+    
+    # Page
+    query = base.order_by(Commande.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(query)
     commandes = result.scalars().all()
     
-    return commandes
+    return {
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit,
+        "commandes": [CommandeResponse.model_validate(c).model_dump() for c in commandes],
+    }
 
 
 @router.post("/{commande_id}/accepter", response_model=CommandeResponse)
@@ -409,7 +437,7 @@ async def update_commande_status(
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Mettre à jour le statut d'une commande (livreur)"""
+    """Mettre à jour le statut d'une commande (livreur) — transitions validées"""
     query = select(Commande).where(
         Commande.id == commande_id,
         Commande.livreur_id == livreur.id
@@ -423,11 +451,19 @@ async def update_commande_status(
             detail="Commande non trouvée"
         )
     
-    # Mettre à jour selon le statut
+    # Valider la transition d'état
+    allowed = TRANSITIONS_VALIDES.get(commande.status, [])
+    if nouveau_statut not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Transition invalide : {commande.status.value} → {nouveau_statut.value}. "
+                   f"Transitions possibles : {[s.value for s in allowed]}"
+        )
+    
     commande.status = nouveau_statut
     
     if nouveau_statut == CommandeStatus.EN_RECUPERATION:
-        commande.recuperee_at = datetime.utcnow()
+        commande.recuperee_at = datetime.now(timezone.utc)
     elif nouveau_statut == CommandeStatus.EN_LIVRAISON:
         pass  # Déjà en route
     elif nouveau_statut == CommandeStatus.TERMINEE:
@@ -437,7 +473,7 @@ async def update_commande_status(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Code de livraison invalide ou manquant"
                 )
-        commande.livree_at = datetime.utcnow()
+        commande.livree_at = datetime.now(timezone.utc)
         livreur.nombre_courses_completees += 1
         livreur.total_gains += commande.montant_livreur  # gains totaux toujours comptés
 
@@ -511,9 +547,10 @@ async def update_commande_status(
 async def annuler_commande(
     commande_id: str,
     annulation: CommandeAnnulation,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Annuler une commande (partenaire ou livreur)"""
+    """Annuler une commande (partenaire propriétaire, livreur assigné, ou admin)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -522,6 +559,27 @@ async def annuler_commande(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Commande non trouvée"
+        )
+    
+    # Vérifier les droits d'accès
+    is_admin = current_user.role == UserRole.ADMIN
+    is_partenaire_owner = False
+    is_livreur_assigned = False
+    if current_user.role == UserRole.PARTENAIRE:
+        p_q = select(Partenaire).where(Partenaire.user_id == current_user.id)
+        p_r = await db.execute(p_q)
+        p = p_r.scalar_one_or_none()
+        is_partenaire_owner = p and commande.partenaire_id == p.id
+    elif current_user.role == UserRole.LIVREUR:
+        l_q = select(Livreur).where(Livreur.user_id == current_user.id)
+        l_r = await db.execute(l_q)
+        l = l_r.scalar_one_or_none()
+        is_livreur_assigned = l and commande.livreur_id == l.id
+
+    if not (is_admin or is_partenaire_owner or is_livreur_assigned):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vous n'êtes pas autorisé à annuler cette commande"
         )
     
     # Vérifier que la commande peut être annulée
@@ -550,7 +608,7 @@ async def annuler_commande(
                 livreur.is_disponible = True
     
     commande.status = CommandeStatus.ANNULEE
-    commande.annulee_at = datetime.utcnow()
+    commande.annulee_at = datetime.now(timezone.utc)
     commande.raison_annulation = annulation.raison
     
     await db.commit()
@@ -635,9 +693,10 @@ async def evaluer_livreur(
 @router.post("/{commande_id}/confirmer-paiement", response_model=CommandeResponse)
 async def confirmer_paiement(
     commande_id: str,
+    livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Confirmer le paiement d'une commande (livreur confirme qu'il a reçu le cash)"""
+    """Confirmer le paiement d'une commande (livreur assigné uniquement)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -646,6 +705,12 @@ async def confirmer_paiement(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Commande non trouvée"
+        )
+    
+    if commande.livreur_id != livreur.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seul le livreur assigné peut confirmer le paiement"
         )
     
     if commande.paiement_confirme == "oui":
@@ -664,9 +729,10 @@ async def confirmer_paiement(
 @router.get("/{commande_id}", response_model=CommandeWithDetails)
 async def get_commande_details(
     commande_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les détails d'une commande"""
+    """Obtenir les détails d'une commande (partenaire propriétaire, livreur assigné, ou admin)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -675,6 +741,27 @@ async def get_commande_details(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Commande non trouvée"
+        )
+    
+    # Vérifier les droits d'accès
+    is_admin = current_user.role == UserRole.ADMIN
+    is_partenaire_owner = False
+    is_livreur_assigned = False
+    if current_user.role == UserRole.PARTENAIRE:
+        p_q = select(Partenaire).where(Partenaire.user_id == current_user.id)
+        p_r = await db.execute(p_q)
+        p = p_r.scalar_one_or_none()
+        is_partenaire_owner = p and commande.partenaire_id == p.id
+    elif current_user.role == UserRole.LIVREUR:
+        l_q = select(Livreur).where(Livreur.user_id == current_user.id)
+        l_r = await db.execute(l_q)
+        l = l_r.scalar_one_or_none()
+        is_livreur_assigned = l and commande.livreur_id == l.id
+
+    if not (is_admin or is_partenaire_owner or is_livreur_assigned):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vous n'êtes pas autorisé à consulter cette commande"
         )
     
     # Récupérer les détails partenaire et livreur
@@ -697,7 +784,6 @@ async def get_commande_details(
         livreur_result = await db.execute(livreur_query)
         livreur = livreur_result.scalar_one_or_none()
         if livreur:
-            # Récupérer le téléphone depuis l'user
             user_query = select(User).where(User.id == livreur.user_id)
             user_result = await db.execute(user_query)
             user = user_result.scalar_one_or_none()
@@ -711,5 +797,9 @@ async def get_commande_details(
                 "latitude": livreur.latitude,
                 "longitude": livreur.longitude,
             }
+    
+    # Masquer le code_livraison pour le livreur (seul le client le connaît)
+    if is_livreur_assigned and not is_admin:
+        response_dict["code_livraison"] = None
     
     return response_dict

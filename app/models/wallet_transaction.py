@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from ..core.database import Base
 
@@ -17,4 +17,4 @@ class WalletTransaction(Base):
     description = Column(Text, nullable=True)
     commande_id = Column(UUID(as_uuid=True), ForeignKey("commandes.id", ondelete="SET NULL"), nullable=True)
     statut      = Column(String(20), nullable=False, default="complete")  # complete | en_attente | refuse
-    created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at  = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))

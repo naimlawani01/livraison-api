@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from ....core.database import get_db
 from ....models.livreur import Livreur
@@ -133,7 +133,7 @@ async def update_my_location(
         logger.warning(f"Impossible de mettre à jour le cache GPS Redis : {e}")
 
     # 2. Sauvegarder dans PostgreSQL seulement toutes les 2 minutes pour protéger la base
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     do_postgres_update = True
     
     if livreur.derniere_position_maj:

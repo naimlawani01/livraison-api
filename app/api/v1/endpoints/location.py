@@ -8,7 +8,7 @@ Flux :
 4. Le client autorise → sa position est envoyée ici et sauvegardée
 """
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,7 +91,7 @@ async def submit_location(token: str, data: LocationSubmit, db: AsyncSession = D
 
     commande.latitude_client = data.latitude
     commande.longitude_client = data.longitude
-    commande.location_shared_at = datetime.utcnow()
+    commande.location_shared_at = datetime.now(timezone.utc)
     await db.commit()
 
     return {"message": "Position enregistrée avec succès", "already_shared": False}
