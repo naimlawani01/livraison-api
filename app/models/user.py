@@ -31,7 +31,7 @@ class User(Base):
     
     # OTP
     otp_code = Column(String(6), nullable=True)
-    otp_expires_at = Column(DateTime, nullable=True)
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)
     
     # Push notifications (FCM)
     device_token = Column(String(500), nullable=True)

@@ -54,7 +54,7 @@ class Commande(Base):
     
     # Lien de localisation client
     location_token = Column(String(64), unique=True, nullable=True, index=True)
-    location_shared_at = Column(DateTime, nullable=True)
+    location_shared_at = Column(DateTime(timezone=True), nullable=True)
     
     # Lien de suivi client
     tracking_token = Column(String(64), unique=True, nullable=True, index=True)
@@ -80,11 +80,11 @@ class Commande(Base):
     commentaire_livreur = Column(Text, nullable=True)
     
     # Historique des événements
-    diffusee_at = Column(DateTime, nullable=True)
-    acceptee_at = Column(DateTime, nullable=True)
-    recuperee_at = Column(DateTime, nullable=True)
-    livree_at = Column(DateTime, nullable=True)
-    annulee_at = Column(DateTime, nullable=True)
+    diffusee_at = Column(DateTime(timezone=True), nullable=True)
+    acceptee_at = Column(DateTime(timezone=True), nullable=True)
+    recuperee_at = Column(DateTime(timezone=True), nullable=True)
+    livree_at = Column(DateTime(timezone=True), nullable=True)
+    annulee_at = Column(DateTime(timezone=True), nullable=True)
     raison_annulation = Column(Text, nullable=True)
     
     # Timestamps

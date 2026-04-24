@@ -30,7 +30,7 @@ class Livreur(Base):
     # Géolocalisation
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
-    derniere_position_maj = Column(DateTime, nullable=True)
+    derniere_position_maj = Column(DateTime(timezone=True), nullable=True)
     
     # Disponibilité
     is_disponible = Column(Boolean, default=False)
@@ -38,7 +38,7 @@ class Livreur(Base):
     
     # Validation
     is_verified = Column(Boolean, default=False)
-    verified_at = Column(DateTime, nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     
     # Statistiques
     note_moyenne = Column(Float, default=0.0)
