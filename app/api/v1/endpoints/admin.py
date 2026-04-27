@@ -372,6 +372,8 @@ async def get_commandes_recentes(
             "livreur_nom": livreur_nom,
             "livreur_phone": livreur_phone,
             "mode_paiement": c.mode_paiement,
+            "paiement_confirme": c.paiement_confirme,
+            "geniuspay_checkout_url": c.geniuspay_checkout_url,
             "commission_plateforme": c.commission_plateforme,
             "distance_km": c.distance_km,
             "created_at": c.created_at,
