@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     
+    # GeniusPay
+    GENIUSPAY_API_KEY: str = ""          # YOUR_MERCHANT_API_KEY
+    GENIUSPAY_API_SECRET: str = ""       # sk_sandbox_xxx  /  sk_live_xxx
+    GENIUSPAY_WEBHOOK_SECRET: str = ""   # whsec_xxx
+    GENIUSPAY_BASE_URL: str = "https://pay.genius.ci/api/v1/merchant"
+    GENIUSPAY_WALLET_ID: str = ""        # UUID du wallet payout Sönaiya
+    
     # Geolocation
     DEFAULT_SEARCH_RADIUS_KM: float = 5.0
     MAX_SEARCH_RADIUS_KM: float = 10.0

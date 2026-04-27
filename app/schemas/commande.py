@@ -56,6 +56,7 @@ class CommandeResponse(CommandeBase):
     montant_livreur: float
     mode_paiement: ModePaiement
     paiement_confirme: str
+    geniuspay_reference: Optional[str] = None
     exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]

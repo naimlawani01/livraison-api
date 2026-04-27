@@ -7,11 +7,14 @@ from sqlalchemy import select, func
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+import logging
 
 from ....core.database import get_db
 from ....models.livreur import Livreur
 from ....models.wallet_transaction import WalletTransaction
 from ....utils.dependencies import get_current_livreur
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -170,15 +173,46 @@ async def demander_retrait(
         solde_avant=solde_avant,
         solde_apres=livreur.solde_disponible,
         description=f"Retrait {body.methode} → {body.numero_telephone}",
-        statut="en_attente",  # traitement manuel pour l'instant
+        statut="en_attente",
     )
     db.add(txn)
     await db.commit()
+    await db.refresh(txn)
+
+    # Tenter le payout automatique via GeniusPay
+    from ....core.config import settings
+    if settings.GENIUSPAY_API_KEY and settings.GENIUSPAY_WALLET_ID:
+        try:
+            from ....services import genius_pay_service
+            # Récupérer le nom du livreur pour le payout
+            from sqlalchemy import select as sa_select
+            from ....models.user import User
+            q = sa_select(User).where(User.id == livreur.user_id)
+            r = await db.execute(q)
+            user = r.scalar_one_or_none()
+            nom_livreur = f"{user.prenom} {user.nom}" if user else "Livreur"
+
+            payout = await genius_pay_service.initier_payout(
+                livreur_id=str(livreur.id),
+                montant=body.montant,
+                telephone=body.numero_telephone,
+                provider=body.methode,          # "orange_money" | "mtn_money" | "wave"
+                nom_livreur=nom_livreur,
+                idempotency_key=f"retrait-{txn.id}",
+            )
+            txn.geniuspay_reference = payout.get("reference")
+            txn.statut = "en_cours"
+            await db.commit()
+            logger.info("Payout GeniusPay initié: ref=%s livreur=%s", payout.get("reference"), livreur.id)
+        except Exception as e:
+            logger.error("GeniusPay payout échoué: %s — retrait restera en_attente", e)
+            # Ne pas rollback : l'admin pourra traiter manuellement
 
     return {
-        "message": "Demande de retrait enregistrée",
+        "message": "Demande de retrait enregistrée"
+                   + (" — paiement Mobile Money en cours" if txn.statut == "en_cours" else " — traitement en attente"),
         "montant": body.montant,
         "solde_apres": round(livreur.solde_disponible, 2),
         "transaction_id": str(txn.id),
-        "statut": "en_attente",
+        "statut": txn.statut,
     }

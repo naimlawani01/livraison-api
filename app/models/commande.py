@@ -62,6 +62,8 @@ class Commande(Base):
     # Paiement
     mode_paiement = Column(SQLEnum(ModePaiement), default=ModePaiement.CASH, nullable=False)
     paiement_confirme = Column(String(10), default="non", nullable=False)  # non, oui
+    geniuspay_reference = Column(String(100), nullable=True)
+    geniuspay_checkout_url = Column(Text, nullable=True)
     
     # Tarification
     prix_propose = Column(Float, nullable=False)

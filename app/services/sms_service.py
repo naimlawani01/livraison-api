@@ -57,6 +57,43 @@ class SMSService:
             logger.error(f"Erreur envoi SMS: {e}")
             return False
 
+    async def envoyer_lien_paiement(
+        self,
+        telephone: str,
+        nom_client: str,
+        checkout_url: str,
+        numero_commande: str,
+        montant: float,
+    ) -> bool:
+        """
+        Envoyer le lien de paiement GeniusPay au client final par SMS.
+        Le client n'a pas d'app — il paie depuis ce lien.
+        """
+        try:
+            message = (
+                f"Bonjour {nom_client},\n"
+                f"Votre commande {numero_commande} est prête.\n"
+                f"Montant à payer : {int(montant):,} GNF\n"
+                f"Payez en ligne ici : {checkout_url}\n"
+                f"La livraison démarrera après votre paiement."
+            )
+
+            if not self.client:
+                logger.info("[DEV MODE] SMS lien paiement pour %s: %s", telephone, checkout_url)
+                return True
+
+            result = self.client.messages.create(
+                body=message,
+                from_=settings.TWILIO_PHONE_NUMBER,
+                to=telephone,
+            )
+            logger.info("SMS lien paiement envoyé à %s, SID: %s", telephone, result.sid)
+            return True
+
+        except Exception as e:
+            logger.error("Erreur envoi SMS lien paiement: %s", e)
+            return False
+
 
 # Instance singleton
 sms_service = SMSService()

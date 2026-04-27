@@ -16,5 +16,6 @@ class WalletTransaction(Base):
     solde_apres = Column(Float, nullable=False)
     description = Column(Text, nullable=True)
     commande_id = Column(UUID(as_uuid=True), ForeignKey("commandes.id", ondelete="SET NULL"), nullable=True)
-    statut      = Column(String(20), nullable=False, default="complete")  # complete | en_attente | refuse
+    statut      = Column(String(20), nullable=False, default="complete")  # complete | en_attente | en_cours | refuse
+    geniuspay_reference = Column(String(100), nullable=True)
     created_at  = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))

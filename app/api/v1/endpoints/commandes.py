@@ -174,15 +174,46 @@ async def create_commande(
     await db.commit()
     await db.refresh(commande)
     
-    # Diffuser la commande aux livreurs proches (passe en DIFFUSEE)
-    await MatchingService.diffuser_commande(
-        db,
-        commande,
-        partenaire.latitude,
-        partenaire.longitude
-    )
+    if commande_data.mode_paiement == ModePaiement.MOBILE_MONEY and settings.GENIUSPAY_API_KEY:
+        # Initier le paiement GeniusPay — la commande sera diffusée après confirmation webhook
+        try:
+            from ....services import genius_pay_service
+            paiement = await genius_pay_service.initier_paiement(
+                commande_id=str(commande.id),
+                partenaire_id=str(partenaire.id),
+                montant=commande.prix_propose,
+                description=f"Livraison {commande.numero_commande}",
+                telephone_client=commande.contact_client_telephone,
+                nom_client=commande.contact_client_nom,
+            )
+            commande.geniuspay_reference = paiement.get("reference")
+            commande.geniuspay_checkout_url = paiement.get("checkout_url")
+            await db.commit()
+
+            # Envoyer le lien de paiement par SMS au client final
+            if commande.geniuspay_checkout_url:
+                from ....services.sms_service import sms_service
+                await sms_service.envoyer_lien_paiement(
+                    telephone=commande.contact_client_telephone,
+                    nom_client=commande.contact_client_nom,
+                    checkout_url=commande.geniuspay_checkout_url,
+                    numero_commande=commande.numero_commande,
+                    montant=commande.prix_propose,
+                )
+
+        except Exception as e:
+            logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
+            await MatchingService.diffuser_commande(db, commande, partenaire.latitude, partenaire.longitude)
+    else:
+        # CASH (ou GeniusPay non configuré) — diffuser immédiatement
+        await MatchingService.diffuser_commande(
+            db,
+            commande,
+            partenaire.latitude,
+            partenaire.longitude
+        )
     
-    # Refresh pour retourner le statut DIFFUSEE au client
+    # Refresh pour retourner l'état final au client (avec checkout_url si Mobile Money)
     await db.refresh(commande)
     
     return commande
