@@ -169,19 +169,28 @@ async def update_disponibilite(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Votre compte doit être vérifié par un administrateur"
         )
-    
+
     # Vérifier que la position est connue si activation
     if disponibilite_data.is_disponible and (not livreur.latitude or not livreur.longitude):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Veuillez d'abord mettre à jour votre position"
         )
-    
+
     livreur.is_disponible = disponibilite_data.is_disponible
-    
+
     await db.commit()
     await db.refresh(livreur)
-    
+
+    # Si le livreur passe offline → le retirer du GEO index Redis pour qu'il
+    # n'apparaisse plus dans `trouver_livreurs_proches` (push FCM, etc.).
+    # On le ré-ajoutera au prochain `update_my_location` quand il repasse online.
+    if not disponibilite_data.is_disponible:
+        try:
+            await redis_client.zrem("livreurs_locations", str(livreur.id))
+        except Exception as e:
+            logger.warning(f"Impossible de retirer le livreur de Redis GEO : {e}")
+
     return livreur
 
 
