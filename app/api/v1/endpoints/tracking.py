@@ -2,22 +2,27 @@
 Suivi de livraison public pour le client.
 
 Le client reçoit un lien /suivi/{token} par WhatsApp.
-La page affiche les étapes de la livraison et se met à jour automatiquement.
+La page affiche les étapes de la livraison + une carte Leaflet en temps réel
+(position du livreur lue dans Redis GEO).
 """
+import logging
 import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
+from ....core.redis import redis_client
 from ....models.commande import Commande
-from ....models.partenaire import Partenaire
 from ....models.livreur import Livreur
+from ....models.partenaire import Partenaire
 from ....models.user import User
 from ....utils.dependencies import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -79,6 +84,7 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 
     livreur_nom = None
     livreur_tel = None
+    livreur_pos = None
     if commande.livreur_id:
         liv_q = select(Livreur).where(Livreur.id == commande.livreur_id)
         liv_r = await db.execute(liv_q)
@@ -91,11 +97,50 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
             if user:
                 livreur_tel = user.phone
 
+            # Position temps réel : on tente Redis GEO d'abord (plus frais),
+            # puis on retombe sur les coordonnées Postgres.
+            try:
+                redis_pos = await redis_client.geopos(
+                    "livreurs_locations", str(livreur.id)
+                )
+                if redis_pos and redis_pos[0]:
+                    lng, lat = redis_pos[0]
+                    livreur_pos = {"latitude": float(lat), "longitude": float(lng)}
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Redis geopos indispo: %s", exc)
+            if livreur_pos is None and livreur.latitude and livreur.longitude:
+                livreur_pos = {
+                    "latitude": float(livreur.latitude),
+                    "longitude": float(livreur.longitude),
+                }
+
+    # Position partenaire (point de départ)
+    partenaire_pos = None
+    partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+    partenaire_r = await db.execute(partenaire_q)
+    partenaire_row = partenaire_r.scalar_one_or_none()
+    if partenaire_row and partenaire_row.latitude and partenaire_row.longitude:
+        partenaire_pos = {
+            "latitude": float(partenaire_row.latitude),
+            "longitude": float(partenaire_row.longitude),
+        }
+
+    # Position client (point d'arrivée)
+    client_pos = None
+    if commande.latitude_client is not None and commande.longitude_client is not None:
+        client_pos = {
+            "latitude": float(commande.latitude_client),
+            "longitude": float(commande.longitude_client),
+        }
+
     return {
         "status": commande.status.value if hasattr(commande.status, 'value') else commande.status,
         "numero_commande": commande.numero_commande,
         "livreur_nom": livreur_nom,
         "livreur_telephone": livreur_tel,
+        "livreur_position": livreur_pos,
+        "partenaire_position": partenaire_pos,
+        "client_position": client_pos,
         "created_at": commande.created_at.isoformat() if commande.created_at else None,
         "acceptee_at": commande.acceptee_at.isoformat() if commande.acceptee_at else None,
         "recuperee_at": commande.recuperee_at.isoformat() if commande.recuperee_at else None,
@@ -113,6 +158,8 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Suivi commande {numero}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
@@ -121,20 +168,49 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     min-height: 100vh; padding: 20px 20px 40px;
   }}
   .card {{
-    background: #fff; border-radius: 16px; padding: 28px 24px;
-    max-width: 440px; margin: 0 auto;
+    background: #fff; border-radius: 16px; padding: 24px 22px;
+    max-width: 460px; margin: 0 auto;
     box-shadow: 0 4px 24px rgba(0,0,0,0.08);
   }}
-  .header {{ text-align: center; margin-bottom: 28px; }}
-  .header .icon {{ font-size: 40px; margin-bottom: 12px; }}
+  .header {{ text-align: center; margin-bottom: 22px; }}
+  .header .icon {{ font-size: 36px; margin-bottom: 10px; }}
   .header h1 {{ font-size: 18px; font-weight: 700; }}
   .header .sub {{ font-size: 13px; color: #6b6b6b; margin-top: 4px; }}
   .header .numero {{ font-size: 12px; color: #999; margin-top: 2px; font-family: monospace; }}
 
+  /* Map */
+  #map {{
+    height: 280px; border-radius: 14px; overflow: hidden;
+    margin-bottom: 22px; background: #e5e7eb;
+  }}
+  #mapEmpty {{
+    height: 280px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    background: #f3f4f6; color: #9ca3af; font-size: 13px;
+    margin-bottom: 22px; text-align: center; padding: 0 24px;
+  }}
+  .leaflet-control-attribution {{ font-size: 9px !important; }}
+
+  /* Marker custom */
+  .marker-pin {{
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    border: 2px solid #fff;
+  }}
+  .marker-livreur {{ background: #FF5A1F; animation: pulseRing 2.2s ease-out infinite; }}
+  .marker-partenaire {{ background: #111827; }}
+  .marker-client {{ background: #059669; }}
+  @keyframes pulseRing {{
+    0% {{ box-shadow: 0 0 0 0 rgba(255,90,31,0.55); }}
+    70% {{ box-shadow: 0 0 0 14px rgba(255,90,31,0); }}
+    100% {{ box-shadow: 0 0 0 0 rgba(255,90,31,0); }}
+  }}
+
   /* Stepper */
   .stepper {{ position: relative; padding-left: 32px; }}
   .step {{
-    position: relative; padding-bottom: 28px;
+    position: relative; padding-bottom: 22px;
     opacity: 0.35; transition: opacity 0.4s;
   }}
   .step.active {{ opacity: 1; }}
@@ -157,18 +233,18 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
   .step:last-child::after {{ display: none; }}
   .step.done::after {{ background: #05A357; }}
 
-  .step-title {{ font-size: 15px; font-weight: 600; margin-bottom: 2px; }}
+  .step-title {{ font-size: 14px; font-weight: 600; margin-bottom: 2px; }}
   .step-desc {{ font-size: 12px; color: #6b6b6b; }}
   .step-time {{ font-size: 11px; color: #999; margin-top: 2px; }}
 
   /* Livreur card */
   .livreur-card {{
-    margin-top: 24px; padding: 16px; border-radius: 12px;
+    margin-top: 20px; padding: 14px; border-radius: 12px;
     background: #f0faf4; border: 1px solid #d0eedd;
     display: none;
   }}
   .livreur-card.show {{ display: block; }}
-  .livreur-card .name {{ font-size: 15px; font-weight: 600; }}
+  .livreur-card .name {{ font-size: 14px; font-weight: 600; }}
   .livreur-card .phone {{
     display: inline-block; margin-top: 8px; padding: 8px 16px;
     background: #05A357; color: #fff; border-radius: 8px;
@@ -177,7 +253,7 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
 
   /* Status banner */
   .banner {{
-    text-align: center; margin-top: 20px; padding: 12px;
+    text-align: center; margin-top: 18px; padding: 12px;
     border-radius: 10px; font-size: 13px; font-weight: 600;
     display: none;
   }}
@@ -189,7 +265,7 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     50% {{ opacity: 0.5; }}
   }}
   .refresh-info {{
-    text-align: center; margin-top: 16px;
+    text-align: center; margin-top: 14px;
     font-size: 11px; color: #bbb;
   }}
 </style>
@@ -203,6 +279,9 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     <div class="sub">Suivi de votre livraison</div>
     <div class="numero">{numero}</div>
   </div>
+
+  <div id="map"></div>
+  <div id="mapEmpty" style="display:none;">📍 La position du livreur s'affichera ici dès qu'un livreur acceptera la course.</div>
 
   <div class="stepper">
     <div class="step" id="step-creee">
@@ -241,8 +320,11 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
   <div class="refresh-info pulse" id="refreshInfo">Mise à jour automatique…</div>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 <script>
-const STEPS_ORDER = ['CREEE','DIFFUSEE','ACCEPTEE','EN_RECUPERATION','EN_LIVRAISON','TERMINEE'];
+const TOKEN = '{token}';
+
 const STEP_MAP = {{
   'CREEE': 'step-creee', 'DIFFUSEE': 'step-creee',
   'ACCEPTEE': 'step-acceptee',
@@ -250,6 +332,92 @@ const STEP_MAP = {{
   'EN_LIVRAISON': 'step-livraison',
   'TERMINEE': 'step-terminee'
 }};
+
+let map = null;
+let livreurMarker = null;
+let partenaireMarker = null;
+let clientMarker = null;
+let mapInitialized = false;
+
+function makeIcon(cls, emoji) {{
+  return L.divIcon({{
+    className: '',
+    html: '<div class="marker-pin ' + cls + '">' + emoji + '</div>',
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+  }});
+}}
+
+function ensureMap() {{
+  if (mapInitialized) return;
+  mapInitialized = true;
+  document.getElementById('mapEmpty').style.display = 'none';
+  document.getElementById('map').style.display = 'block';
+  map = L.map('map', {{
+    zoomControl: false,
+    attributionControl: true,
+    scrollWheelZoom: false,
+  }}).setView([9.535, -13.677], 13); // Conakry par défaut
+  L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    maxZoom: 19,
+    attribution: '© OpenStreetMap',
+  }}).addTo(map);
+}}
+
+function updateMap(data) {{
+  const liv = data.livreur_position;
+  const part = data.partenaire_position;
+  const cli = data.client_position;
+
+  // Si on n'a aucune position du tout → on garde le placeholder
+  if (!liv && !part && !cli) {{
+    document.getElementById('map').style.display = 'none';
+    document.getElementById('mapEmpty').style.display = 'flex';
+    return;
+  }}
+
+  ensureMap();
+
+  // Partenaire (départ) — fixe
+  if (part && !partenaireMarker) {{
+    partenaireMarker = L.marker([part.latitude, part.longitude], {{
+      icon: makeIcon('marker-partenaire', '🏪'),
+      title: 'Partenaire',
+    }}).addTo(map);
+  }}
+
+  // Client (arrivée) — fixe quand connue
+  if (cli && !clientMarker) {{
+    clientMarker = L.marker([cli.latitude, cli.longitude], {{
+      icon: makeIcon('marker-client', '🏠'),
+      title: 'Vous',
+    }}).addTo(map);
+  }}
+
+  // Livreur — animé
+  if (liv) {{
+    const latlng = [liv.latitude, liv.longitude];
+    if (!livreurMarker) {{
+      livreurMarker = L.marker(latlng, {{
+        icon: makeIcon('marker-livreur', '🛵'),
+        title: 'Livreur',
+      }}).addTo(map);
+    }} else {{
+      livreurMarker.setLatLng(latlng);
+    }}
+  }}
+
+  // Auto-fit bounds sur les markers actifs
+  const points = [];
+  if (liv) points.push([liv.latitude, liv.longitude]);
+  if (part) points.push([part.latitude, part.longitude]);
+  if (cli) points.push([cli.latitude, cli.longitude]);
+  if (points.length === 1) {{
+    map.setView(points[0], 15);
+  }} else if (points.length > 1) {{
+    map.fitBounds(points, {{ padding: [40, 40], maxZoom: 16 }});
+  }}
+}}
 
 function fmtTime(iso) {{
   if (!iso) return '';
@@ -263,18 +431,11 @@ function updateUI(data) {{
   const currentStepId = STEP_MAP[s];
 
   if (s === 'ANNULEE') {{
-    stepIds.forEach(id => {{
-      document.getElementById(id).className = 'step';
-    }});
+    stepIds.forEach(id => {{ document.getElementById(id).className = 'step'; }});
     document.getElementById('step-creee').className = 'step cancelled';
     document.getElementById('bannerCancelled').style.display = 'block';
     document.getElementById('refreshInfo').style.display = 'none';
     return;
-  }}
-
-  let reached = false;
-  for (let i = stepIds.length - 1; i >= 0; i--) {{
-    if (stepIds[i] === currentStepId) reached = true;
   }}
 
   let pastCurrent = false;
@@ -290,13 +451,11 @@ function updateUI(data) {{
     }}
   }}
 
-  // Times
   if (data.created_at) document.getElementById('time-creee').textContent = fmtTime(data.created_at);
   if (data.acceptee_at) document.getElementById('time-acceptee').textContent = fmtTime(data.acceptee_at);
   if (data.recuperee_at) document.getElementById('time-recuperee').textContent = fmtTime(data.recuperee_at);
   if (data.livree_at) document.getElementById('time-livree').textContent = fmtTime(data.livree_at);
 
-  // Livreur
   const lc = document.getElementById('livreurCard');
   if (data.livreur_nom) {{
     lc.className = 'livreur-card show';
@@ -310,16 +469,17 @@ function updateUI(data) {{
     lc.className = 'livreur-card';
   }}
 
-  // Banners
   document.getElementById('bannerCancelled').style.display = s === 'ANNULEE' ? 'block' : 'none';
 
   if (s === 'TERMINEE' || s === 'ANNULEE') {{
     document.getElementById('refreshInfo').style.display = 'none';
   }}
+
+  updateMap(data);
 }}
 
 function poll() {{
-  fetch('/suivi/{token}/status')
+  fetch('/suivi/' + TOKEN + '/status')
     .then(r => r.json())
     .then(data => {{
       updateUI(data);
@@ -330,6 +490,9 @@ function poll() {{
     .catch(() => setTimeout(poll, 10000));
 }}
 
+// État initial : on cache la map tant qu'on n'a pas reçu de position
+document.getElementById('map').style.display = 'none';
+document.getElementById('mapEmpty').style.display = 'flex';
 poll();
 </script>
 </body>

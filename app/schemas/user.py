@@ -1,19 +1,31 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
 from ..models.user import UserRole
+from ..utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
+
+
+def _validate_phone(value: str) -> str:
+    """Validator partagé : normalise tout en `+224XXXXXXXXX`."""
+    try:
+        return normalize_guinea_phone(value)
+    except InvalidGuineaPhoneError as e:
+        raise ValueError(str(e))
 
 
 class UserBase(BaseModel):
-    """Schéma de base pour un utilisateur"""
-    phone: str = Field(..., min_length=8, max_length=20, description="Numéro de téléphone")
+    """Schéma de base pour un utilisateur (lecture)."""
+    phone: str = Field(..., description="Numéro guinéen au format +224XXXXXXXXX")
 
 
-class UserCreate(UserBase):
+class UserCreate(BaseModel):
     """Schéma pour créer un utilisateur"""
+    phone: str = Field(..., description="Numéro guinéen")
     role: UserRole
     password: Optional[str] = None
+
+    _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
 
 
 class UserLogin(BaseModel):
@@ -21,16 +33,22 @@ class UserLogin(BaseModel):
     phone: str
     password: Optional[str] = None
 
+    _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
+
 
 class OTPRequest(BaseModel):
     """Demande d'envoi OTP"""
     phone: str
+
+    _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
 
 
 class OTPVerify(BaseModel):
     """Vérification OTP"""
     phone: str
     otp_code: str
+
+    _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
 
 
 class UserResponse(UserBase):
@@ -41,7 +59,7 @@ class UserResponse(UserBase):
     is_verified: bool
     created_at: datetime
     last_login: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 

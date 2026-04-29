@@ -1,21 +1,32 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
 from ..models.commande import CommandeStatus, ModePaiement
+from ..utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
 
 
 class CommandeBase(BaseModel):
     """Schéma de base pour une commande"""
     adresse_client: Optional[str] = Field(None, max_length=500)
     contact_client_nom: str = Field(..., min_length=2, max_length=255)
-    contact_client_telephone: str = Field(..., min_length=8, max_length=20)
+    contact_client_telephone: str = Field(..., description="Téléphone client guinéen")
     instructions_speciales: Optional[str] = None
     description_colis: Optional[str] = Field(
         None,
         max_length=2000,
         description="Nature ou description du colis / commande (pour le livreur)",
     )
+
+    @field_validator("contact_client_telephone", mode="before")
+    @classmethod
+    def _normalize_client_phone(cls, v):
+        if v is None:
+            return v
+        try:
+            return normalize_guinea_phone(str(v))
+        except InvalidGuineaPhoneError as e:
+            raise ValueError(str(e))
 
 
 class CommandeCreate(CommandeBase):

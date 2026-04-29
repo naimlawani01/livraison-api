@@ -4,7 +4,7 @@ Wallet du livreur — solde, historique des transactions, demande de retrait.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 import logging
@@ -13,6 +13,7 @@ from ....core.database import get_db
 from ....models.livreur import Livreur
 from ....models.wallet_transaction import WalletTransaction
 from ....utils.dependencies import get_current_livreur
+from ....utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +36,28 @@ class TransactionOut(BaseModel):
     statut: str
     created_at: str
 
+def _validate_guinea_phone(value: str) -> str:
+    try:
+        return normalize_guinea_phone(value)
+    except InvalidGuineaPhoneError as e:
+        raise ValueError(str(e))
+
+
 class RetraitRequest(BaseModel):
     montant: float = Field(..., gt=0, description="Montant à retirer (> 0)")
     methode: str = Field(..., description="orange_money | mtn_money | wave")
-    numero_telephone: str = Field(..., min_length=8, max_length=20)
+    numero_telephone: str = Field(..., description="Numéro guinéen +224XXXXXXXXX")
+
+    _normalize_phone = field_validator("numero_telephone")(lambda cls, v: _validate_guinea_phone(v))
+
 
 class RechargeRequest(BaseModel):
     montant: float = Field(..., gt=0)
     methode: str = Field(..., description="orange_money | mtn_money | wave")
-    numero_telephone: str = Field(..., min_length=8, max_length=20)
+    numero_telephone: str = Field(..., description="Numéro guinéen +224XXXXXXXXX")
     reference_transaction: str = Field(..., min_length=3, description="Référence de la transaction Mobile Money")
+
+    _normalize_phone = field_validator("numero_telephone")(lambda cls, v: _validate_guinea_phone(v))
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 

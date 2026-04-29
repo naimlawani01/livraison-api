@@ -59,6 +59,7 @@ async def initier_paiement(
     """
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
+        "currency": "XOF",
         "description": description[:500],
         "metadata": {
             "commande_id": commande_id,
@@ -70,6 +71,7 @@ async def initier_paiement(
         payload["customer"] = {
             "name": nom_client or "",
             "phone": telephone_client,
+            "country": "GN",
         }
 
     if success_url:
@@ -163,6 +165,7 @@ async def initier_payout(
             "account": telephone,
         },
         "amount": int(montant),
+        "currency": "XOF",
         "description": f"Retrait Sönaiya — livreur {livreur_id[:8]}",
         "metadata": {
             "livreur_id": livreur_id,
@@ -200,6 +203,24 @@ async def get_paiement(reference: str) -> dict:
     if resp.status_code != 200:
         raise GeniusPayError(f"GeniusPay get_paiement erreur {resp.status_code}")
     return resp.json().get("data", {})
+
+
+# ── 5. Récupérer le statut d'un payout ───────────────────────────────────────
+
+async def get_payout(reference: str) -> dict:
+    """Vérifie le statut d'un payout (réf. ``PYT-xxx``).
+
+    Statuts possibles : pending | completed | failed.
+    """
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{BASE_URL}/payouts/{reference}",
+            headers=_payout_headers(),
+        )
+    if resp.status_code != 200:
+        raise GeniusPayError(f"GeniusPay get_payout erreur {resp.status_code}")
+    data = resp.json().get("data", {})
+    return data.get("payout", data)
 
 
 # ── Erreur custom ─────────────────────────────────────────────────────────────
