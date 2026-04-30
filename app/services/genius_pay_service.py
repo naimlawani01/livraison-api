@@ -63,6 +63,7 @@ async def initier_paiement(
     """
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
+        "gateway": "cinetpay",           # Forcé : on passe par CinetPay
         "description": description[:500],
         "metadata": {
             "commande_id": commande_id,
