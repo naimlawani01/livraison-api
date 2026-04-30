@@ -1,98 +1,116 @@
-from typing import Optional
+"""Service d'envoi de SMS via Nimba SMS (provider local Guinée).
+
+Nimba attend les numéros au format `224XXXXXXXXX` (sans `+`). On normalise
+en interne — l'appelant peut passer le format `+224XXXXXXXXX` sans souci.
+"""
 import logging
-from twilio.rest import Client
+from typing import Optional
+
+from nimbasms import Client
+
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+def _to_nimba_format(phone: str) -> str:
+    """Convertit `+224XXXXXXXXX` → `224XXXXXXXXX` (Nimba veut sans `+`)."""
+    if phone.startswith("+"):
+        return phone[1:]
+    return phone
+
+
 class SMSService:
-    """Service d'envoi de SMS (OTP)"""
-    
+    """Service d'envoi de SMS via Nimba."""
+
     def __init__(self):
-        self.client = None
-        self._initialize_twilio()
-    
-    def _initialize_twilio(self):
-        """Initialiser le client Twilio"""
+        self.client: Optional[Client] = None
+        self.sender_name: str = settings.NIMBASMS_SENDER_NAME
+        self._initialize()
+
+    def _initialize(self):
+        if not (settings.NIMBASMS_ACCOUNT_SID and settings.NIMBASMS_AUTH_TOKEN):
+            logger.warning("Nimba SMS non configuré — les SMS seront loggés en dev mode")
+            return
         try:
-            if settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN:
-                self.client = Client(
-                    settings.TWILIO_ACCOUNT_SID,
-                    settings.TWILIO_AUTH_TOKEN
-                )
-                logger.info("Twilio initialisé avec succès")
-        except Exception as e:
-            logger.warning(f"Twilio non initialisé: {e}")
-    
-    async def envoyer_otp(self, telephone: str, code_otp: str) -> bool:
-        """
-        Envoyer un code OTP par SMS
-        
-        Args:
-            telephone: Numéro de téléphone (format international)
-            code_otp: Code OTP à 6 chiffres
-            
-        Returns:
-            True si succès, False sinon
-        """
-        try:
-            if not self.client:
-                # En mode dev, log le code au lieu d'envoyer
-                logger.info(f"[DEV MODE] Code OTP pour {telephone}: {code_otp}")
-                return True
-            
-            message = f"Votre code de vérification est: {code_otp}\n\nCode valide 5 minutes."
-            
-            result = self.client.messages.create(
-                body=message,
-                from_=settings.TWILIO_PHONE_NUMBER,
-                to=telephone
+            self.client = Client(
+                settings.NIMBASMS_ACCOUNT_SID,
+                settings.NIMBASMS_AUTH_TOKEN,
             )
-            
-            logger.info(f"SMS envoyé à {telephone}, SID: {result.sid}")
+            logger.info("Nimba SMS initialisé (sender: %s)", self.sender_name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Nimba SMS init failed: %s", e)
+
+    # ── Helper interne ────────────────────────────────────────────────────
+
+    def _send(self, telephone: str, message: str) -> bool:
+        """Envoi brut. Retourne True si succès."""
+        if not self.client:
+            logger.info("[DEV MODE] SMS pour %s: %s", telephone, message)
             return True
-            
-        except Exception as e:
-            logger.error(f"Erreur envoi SMS: {e}")
+
+        try:
+            response = self.client.messages.create(
+                to=[_to_nimba_format(telephone)],
+                sender_name=self.sender_name,
+                message=message,
+            )
+            if response.ok:
+                logger.info("SMS envoyé à %s", telephone)
+                return True
+            logger.error("SMS Nimba échec pour %s: %s", telephone, response.data)
+            return False
+        except Exception as e:  # noqa: BLE001
+            logger.error("Erreur envoi SMS Nimba à %s: %s", telephone, e)
             return False
 
-    async def envoyer_lien_paiement(
+    # ── API publique ──────────────────────────────────────────────────────
+
+    async def envoyer_otp(self, telephone: str, code_otp: str) -> bool:
+        """Envoyer un code OTP à 6 chiffres."""
+        message = (
+            f"Sönaiya — votre code de vérification : {code_otp}\n"
+            f"Valide 5 minutes. Ne le partagez avec personne."
+        )
+        return self._send(telephone, message)
+
+    async def envoyer_sms_commande(
         self,
+        *,
         telephone: str,
         nom_client: str,
-        checkout_url: str,
         numero_commande: str,
+        partenaire_nom: str,
         montant: float,
+        tracking_url: str,
+        checkout_url: Optional[str] = None,
     ) -> bool:
         """
-        Envoyer le lien de paiement GeniusPay au client final par SMS.
-        Le client n'a pas d'app — il paie depuis ce lien.
+        SMS unifié envoyé au client à la création de la commande.
+
+        Contient :
+        - Lien de suivi (toujours)
+        - Lien de paiement (si Mobile Money)
         """
-        try:
+        prenom = nom_client.split()[0] if nom_client else "Bonjour"
+        montant_fmt = f"{int(montant):,}".replace(",", " ") + " GNF"
+
+        if checkout_url:
             message = (
-                f"Bonjour {nom_client},\n"
-                f"Votre commande {numero_commande} est prête.\n"
-                f"Montant à payer : {int(montant):,} GNF\n"
-                f"Payez en ligne ici : {checkout_url}\n"
-                f"La livraison démarrera après votre paiement."
+                f"Bonjour {prenom}, votre commande {numero_commande} chez "
+                f"{partenaire_nom} ({montant_fmt}) est en cours.\n"
+                f"Payer : {checkout_url}\n"
+                f"Suivre : {tracking_url}"
+            )
+        else:
+            message = (
+                f"Bonjour {prenom}, votre commande {numero_commande} chez "
+                f"{partenaire_nom} ({montant_fmt}) est en cours.\n"
+                f"À régler en espèces à la livraison.\n"
+                f"Suivre : {tracking_url}"
             )
 
-            if not self.client:
-                logger.info("[DEV MODE] SMS lien paiement pour %s: %s", telephone, checkout_url)
-                return True
-
-            result = self.client.messages.create(
-                body=message,
-                from_=settings.TWILIO_PHONE_NUMBER,
-                to=telephone,
-            )
-            logger.info("SMS lien paiement envoyé à %s, SID: %s", telephone, result.sid)
-            return True
-
-        except Exception as e:
-            logger.error("Erreur envoi SMS lien paiement: %s", e)
-            return False
+        return self._send(telephone, message)
 
 
 # Instance singleton

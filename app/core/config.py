@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+
+    # URL publique du backend — pour construire les liens envoyés par SMS
+    # (tracking, paiement, partage de position). Override via env en prod.
+    PUBLIC_BASE_URL: str = "https://ample-mindfulness-production.up.railway.app"
     
     # Database
     DATABASE_URL: str
@@ -28,10 +32,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480   # 8h
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     
-    # SMS / OTP
-    TWILIO_ACCOUNT_SID: Optional[str] = None
-    TWILIO_AUTH_TOKEN: Optional[str] = None
-    TWILIO_PHONE_NUMBER: Optional[str] = None
+    # SMS — Nimba SMS (provider local Guinée)
+    NIMBASMS_ACCOUNT_SID: Optional[str] = None
+    NIMBASMS_AUTH_TOKEN: Optional[str] = None
+    NIMBASMS_SENDER_NAME: str = "SONAIYA"  # nom expéditeur validé sur Nimba
     
     # Firebase
     FIREBASE_CREDENTIALS: Optional[str] = None

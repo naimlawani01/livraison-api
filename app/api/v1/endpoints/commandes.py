@@ -174,6 +174,8 @@ async def create_commande(
     await db.commit()
     await db.refresh(commande)
     
+    checkout_url: Optional[str] = None
+
     if commande_data.mode_paiement == ModePaiement.MOBILE_MONEY and settings.GENIUSPAY_API_KEY:
         # Initier le paiement GeniusPay — la commande sera diffusée après confirmation webhook
         try:
@@ -188,19 +190,8 @@ async def create_commande(
             )
             commande.geniuspay_reference = paiement.get("reference")
             commande.geniuspay_checkout_url = paiement.get("checkout_url")
+            checkout_url = commande.geniuspay_checkout_url
             await db.commit()
-
-            # Envoyer le lien de paiement par SMS au client final
-            if commande.geniuspay_checkout_url:
-                from ....services.sms_service import sms_service
-                await sms_service.envoyer_lien_paiement(
-                    telephone=commande.contact_client_telephone,
-                    nom_client=commande.contact_client_nom,
-                    checkout_url=commande.geniuspay_checkout_url,
-                    numero_commande=commande.numero_commande,
-                    montant=commande.prix_propose,
-                )
-
         except Exception as e:
             logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
             await MatchingService.diffuser_commande(db, commande, partenaire.latitude, partenaire.longitude)
@@ -212,10 +203,28 @@ async def create_commande(
             partenaire.latitude,
             partenaire.longitude
         )
-    
+
+    # ── SMS unifié au client : tracking + (si MM) lien de paiement ──
+    # Envoyé en automatique à la création — le partenaire n'a pas à cliquer.
+    try:
+        from ....services.sms_service import sms_service
+        tracking_url = f"{settings.PUBLIC_BASE_URL}/suivi/{commande.tracking_token}"
+        await sms_service.envoyer_sms_commande(
+            telephone=commande.contact_client_telephone,
+            nom_client=commande.contact_client_nom,
+            numero_commande=commande.numero_commande,
+            partenaire_nom=partenaire.nom,
+            montant=commande.prix_propose,
+            tracking_url=tracking_url,
+            checkout_url=checkout_url,
+        )
+    except Exception as e:  # noqa: BLE001
+        # On ne fait pas échouer la création si le SMS plante
+        logger.warning(f"SMS commande {commande.numero_commande} non envoyé : {e}")
+
     # Refresh pour retourner l'état final au client (avec checkout_url si Mobile Money)
     await db.refresh(commande)
-    
+
     return commande
 
 
