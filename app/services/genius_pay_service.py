@@ -63,7 +63,6 @@ async def initier_paiement(
     """
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
-        "currency": "GNF",               # Franc guinéen
         "gateway": "cinetpay",           # Forcé : on passe par CinetPay
         "description": description[:500],
         "metadata": {
@@ -71,6 +70,8 @@ async def initier_paiement(
             "partenaire_id": partenaire_id,
         },
     }
+    # Note: pas de "currency" — GeniusPay accepte seulement XOF/EUR/USD,
+    # GNF n'est pas dans la liste. Le défaut XOF est appliqué côté GeniusPay.
 
     # Le nom du client peut pré-remplir la page de checkout (optionnel)
     if nom_client:
@@ -81,7 +82,7 @@ async def initier_paiement(
     if error_url:
         payload["error_url"] = error_url
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         resp = await client.post(
             f"{BASE_URL}/payments",
             headers=_collect_headers(),
@@ -175,7 +176,7 @@ async def initier_payout(
         "idempotency_key": idempotency_key,
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         resp = await client.post(
             f"{BASE_URL}/payouts",
             headers=_payout_headers(),
@@ -197,7 +198,7 @@ async def initier_payout(
 
 async def get_paiement(reference: str) -> dict:
     """Vérifie le statut d'une transaction (polling de secours)."""
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         resp = await client.get(
             f"{BASE_URL}/payments/{reference}",
             headers=_collect_headers(),
@@ -214,7 +215,7 @@ async def get_payout(reference: str) -> dict:
 
     Statuts possibles : pending | completed | failed.
     """
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         resp = await client.get(
             f"{BASE_URL}/payouts/{reference}",
             headers=_payout_headers(),
