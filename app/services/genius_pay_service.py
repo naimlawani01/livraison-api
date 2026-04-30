@@ -45,7 +45,6 @@ async def initier_paiement(
     partenaire_id: str,
     montant: float,
     description: str,
-    telephone_client: Optional[str] = None,
     nom_client: Optional[str] = None,
     success_url: Optional[str] = None,
     error_url: Optional[str] = None,
@@ -54,12 +53,16 @@ async def initier_paiement(
     Crée une transaction GeniusPay et retourne:
       - checkout_url  : URL à ouvrir dans l'app
       - reference     : MTX-xxx à stocker sur la commande
-    
-    En mode sandbox les clés pk_sandbox_xxx / sk_sandbox_xxx suffisent.
+
+    Note GeniusPay (support) :
+      - `currency` et `country` ne sont pas attendus → omis
+      - Le numéro de téléphone est saisi par le client sur la page de
+        checkout, on ne l'envoie pas dans le payload
+      - Le provider Mobile Money (Orange, MTN, …) est détecté
+        automatiquement à partir du numéro saisi et du pays
     """
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
-        "currency": "XOF",
         "description": description[:500],
         "metadata": {
             "commande_id": commande_id,
@@ -67,12 +70,9 @@ async def initier_paiement(
         },
     }
 
-    if telephone_client:
-        payload["customer"] = {
-            "name": nom_client or "",
-            "phone": telephone_client,
-            "country": "GN",
-        }
+    # Le nom du client peut pré-remplir la page de checkout (optionnel)
+    if nom_client:
+        payload["customer"] = {"name": nom_client}
 
     if success_url:
         payload["success_url"] = success_url

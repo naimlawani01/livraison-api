@@ -64,7 +64,6 @@ async def relancer_paiement(
             partenaire_id=str(partenaire.id),
             montant=commande.prix_propose,
             description=f"Livraison {commande.numero_commande}",
-            telephone_client=commande.contact_client_telephone,
             nom_client=commande.contact_client_nom,
         )
     except GeniusPayError as e:
