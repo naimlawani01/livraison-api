@@ -3,9 +3,11 @@ from sqlalchemy.orm import declarative_base
 from .config import settings
 
 # Création du moteur de base de données
+# echo=False même en DEBUG : les requêtes SQL polluent les logs au quotidien.
+# Pour activer ponctuellement, mettre SQLALCHEMY_ECHO=true en env.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=settings.SQLALCHEMY_ECHO,
     future=True,
     pool_pre_ping=True,
     pool_size=10,

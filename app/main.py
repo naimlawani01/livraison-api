@@ -15,6 +15,16 @@ logging.basicConfig(
     level=logging.INFO if settings.DEBUG else logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Réduire le bruit des loggers tiers
+# - uvicorn.access : log toutes les requêtes HTTP (health checks, polling) → WARNING
+# - httpx / urllib3 : log les requêtes sortantes (Twilio, GeniusPay, Firebase) → WARNING
+# - sqlalchemy.engine : pour le cas où SQLALCHEMY_ECHO serait activé par erreur
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 import asyncio

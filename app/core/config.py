@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     API_PREFIX: str = "/api/v1"
+
+    # Verbosité — séparé de DEBUG pour ne pas noyer les logs en dev
+    SQLALCHEMY_ECHO: bool = False  # SQLALCHEMY_ECHO=true pour debug SQL ponctuel
     
     # Server
     HOST: str = "0.0.0.0"
