@@ -7,11 +7,27 @@ from ..utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
 
 
 def _validate_phone(value: str) -> str:
-    """Validator partagé : normalise tout en `+224XXXXXXXXX`."""
+    """Validator strict : normalise vers `+224XXXXXXXXX`. Rejette les autres."""
     try:
         return normalize_guinea_phone(value)
     except InvalidGuineaPhoneError as e:
         raise ValueError(str(e))
+
+
+def _normalize_phone_lenient(value: str) -> str:
+    """Validator tolérant pour le login : tente la normalisation guinéenne,
+    sinon laisse passer tel quel.
+
+    Permet aux comptes admin (ou anciens comptes avec un format différent
+    avant la migration) de se connecter sans rejet 422.
+    """
+    if not isinstance(value, str):
+        return value
+    cleaned = value.strip()
+    try:
+        return normalize_guinea_phone(cleaned)
+    except InvalidGuineaPhoneError:
+        return cleaned
 
 
 class UserBase(BaseModel):
@@ -29,11 +45,11 @@ class UserCreate(BaseModel):
 
 
 class UserLogin(BaseModel):
-    """Schéma pour connexion"""
+    """Schéma pour connexion (tolérant pour ne pas bloquer les comptes existants)"""
     phone: str
     password: Optional[str] = None
 
-    _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
+    _normalize_phone = field_validator("phone")(lambda cls, v: _normalize_phone_lenient(v))
 
 
 class OTPRequest(BaseModel):
