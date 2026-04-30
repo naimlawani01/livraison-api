@@ -62,6 +62,20 @@ def _mult_heure(heure: int) -> float:
     return 1.5
 
 
+def calculer_prix(distance_km: float, nature_colis: str = "standard") -> float:
+    """Formule unifiée P = (P_base + d × T_km) × M_colis × M_heure.
+
+    Arrondi aux 500 GNF supérieurs, minimum P_base.
+    Utilisée à la création (si position connue) ET au partage GPS du client.
+    """
+    P_base = 10_000
+    T_km = 1_500
+    M_colis = _MULT_COLIS.get(str(nature_colis).lower(), 1.0)
+    M_heure = _mult_heure(datetime.now().hour)
+    prix_brut = (P_base + distance_km * T_km) * M_colis * M_heure
+    return max(P_base, round(prix_brut / 500) * 500)
+
+
 @router.post("/estimer-prix")
 async def estimer_prix(
     data: dict,
@@ -121,33 +135,48 @@ async def create_commande(
     partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
-    """Créer une nouvelle commande de livraison"""
+    """Créer une nouvelle commande de livraison.
+
+    Le prix dépend de la position du client (distance) et de la nature du
+    colis. Comme la position n'est généralement pas connue à la création :
+
+    - Si position client fournie  → prix calculé tout de suite, paiement
+      GeniusPay créé immédiatement (si MM), commande diffusée
+    - Si position absente          → prix de base provisoire, pas de
+      paiement GeniusPay, pas de diffusion. Le client recevra un lien de
+      partage de position. Le prix sera recalculé puis le paiement créé
+      dans `/loc/{token}/submit` après partage.
+    """
     if not partenaire.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Votre partenaire doit être vérifié par un administrateur avant de pouvoir créer des commandes"
         )
 
-    # Calculer la commission
-    commission, montant_livreur = MatchingService.calculer_commission(
-        commande_data.prix_propose
+    has_position = (
+        commande_data.latitude_client is not None
+        and commande_data.longitude_client is not None
     )
-    
-    # Calculer la distance si coordonnées client fournies
+
     distance_km = None
     duree_estimee = None
-    
-    if commande_data.latitude_client and commande_data.longitude_client:
+    prix_final = commande_data.prix_propose  # provisoire par défaut
+
+    if has_position:
         distance_km = GeolocationService.calculer_distance(
             (partenaire.latitude, partenaire.longitude),
-            (commande_data.latitude_client, commande_data.longitude_client)
+            (commande_data.latitude_client, commande_data.longitude_client),
         )
         duree_estimee = GeolocationService.estimer_duree_trajet(distance_km)
-    
+        # Prix calculé depuis la formule officielle (ne pas faire confiance
+        # à la valeur envoyée par le client mobile — autorité = backend)
+        prix_final = calculer_prix(distance_km, commande_data.nature_colis)
+
+    commission, montant_livreur = MatchingService.calculer_commission(prix_final)
+
     import random
     code_livraison = str(random.randint(1000, 9999)) if commande_data.exige_code_livraison else None
-    
-    # Créer la commande
+
     commande = Commande(
         numero_commande=Commande.generer_numero_commande(),
         partenaire_id=partenaire.id,
@@ -158,7 +187,8 @@ async def create_commande(
         contact_client_telephone=commande_data.contact_client_telephone,
         instructions_speciales=commande_data.instructions_speciales,
         description_colis=commande_data.description_colis,
-        prix_propose=commande_data.prix_propose,
+        nature_colis=commande_data.nature_colis,
+        prix_propose=prix_final,
         commission_plateforme=commission,
         montant_livreur=montant_livreur,
         mode_paiement=commande_data.mode_paiement,
@@ -166,64 +196,78 @@ async def create_commande(
         duree_estimee_minutes=duree_estimee,
         status=CommandeStatus.CREEE,
         tracking_token=secrets.token_urlsafe(32),
+        # Toujours générer un location_token — il sert même si la position
+        # est connue (le client peut malgré tout consulter / corriger).
+        location_token=secrets.token_urlsafe(32),
         exige_code_livraison=commande_data.exige_code_livraison,
         code_livraison=code_livraison,
     )
-    
+
     db.add(commande)
     await db.commit()
     await db.refresh(commande)
-    
+
     checkout_url: Optional[str] = None
 
-    if commande_data.mode_paiement == ModePaiement.MOBILE_MONEY and settings.GENIUSPAY_API_KEY:
-        # Initier le paiement GeniusPay — la commande sera diffusée après confirmation webhook
-        try:
-            from ....services import genius_pay_service
-            paiement = await genius_pay_service.initier_paiement(
-                commande_id=str(commande.id),
-                partenaire_id=str(partenaire.id),
-                montant=commande.prix_propose,
-                description=f"Livraison {commande.numero_commande}",
-                nom_client=commande.contact_client_nom,
+    if has_position:
+        # Position connue → on peut traiter immédiatement
+        if (
+            commande_data.mode_paiement == ModePaiement.MOBILE_MONEY
+            and settings.GENIUSPAY_API_KEY
+        ):
+            try:
+                from ....services import genius_pay_service
+                paiement = await genius_pay_service.initier_paiement(
+                    commande_id=str(commande.id),
+                    partenaire_id=str(partenaire.id),
+                    montant=commande.prix_propose,
+                    description=f"Livraison {commande.numero_commande}",
+                    nom_client=commande.contact_client_nom,
+                )
+                commande.geniuspay_reference = paiement.get("reference")
+                commande.geniuspay_checkout_url = paiement.get("checkout_url")
+                checkout_url = commande.geniuspay_checkout_url
+                await db.commit()
+                # MM : on attend le webhook payment.success pour diffuser
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
+                await MatchingService.diffuser_commande(
+                    db, commande, partenaire.latitude, partenaire.longitude,
+                )
+        else:
+            # Cash → diffuser immédiatement
+            await MatchingService.diffuser_commande(
+                db, commande, partenaire.latitude, partenaire.longitude,
             )
-            commande.geniuspay_reference = paiement.get("reference")
-            commande.geniuspay_checkout_url = paiement.get("checkout_url")
-            checkout_url = commande.geniuspay_checkout_url
-            await db.commit()
-        except Exception as e:
-            logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
-            await MatchingService.diffuser_commande(db, commande, partenaire.latitude, partenaire.longitude)
-    else:
-        # CASH (ou GeniusPay non configuré) — diffuser immédiatement
-        await MatchingService.diffuser_commande(
-            db,
-            commande,
-            partenaire.latitude,
-            partenaire.longitude
-        )
+    # else : position absente → on ne diffuse PAS, on attend que le client
+    # partage sa position via /loc/{token} qui s'occupera du calcul prix +
+    # paiement (si MM) + diffusion.
 
-    # ── SMS unifié au client : tracking + (si MM) lien de paiement ──
-    # Envoyé en automatique à la création — le partenaire n'a pas à cliquer.
+    # ── SMS unifié au client ──
+    # Le lien envoyé dépend de l'état :
+    #   • Position connue + Cash       → /suivi/{tracking_token}
+    #   • Position connue + MM payable → /suivi/{tracking_token} (avec checkout dans le SMS)
+    #   • Position absente             → /loc/{location_token} (page partage)
     try:
         from ....services.sms_service import sms_service
-        tracking_url = f"{settings.PUBLIC_BASE_URL}/suivi/{commande.tracking_token}"
+        if has_position:
+            action_url = f"{settings.PUBLIC_BASE_URL}/suivi/{commande.tracking_token}"
+        else:
+            action_url = f"{settings.PUBLIC_BASE_URL}/loc/{commande.location_token}"
         await sms_service.envoyer_sms_commande(
             telephone=commande.contact_client_telephone,
             nom_client=commande.contact_client_nom,
             numero_commande=commande.numero_commande,
             partenaire_nom=partenaire.nom,
-            montant=commande.prix_propose,
-            tracking_url=tracking_url,
+            montant=commande.prix_propose if has_position else 0,
+            tracking_url=action_url,
             checkout_url=checkout_url,
+            position_required=not has_position,
         )
     except Exception as e:  # noqa: BLE001
-        # On ne fait pas échouer la création si le SMS plante
         logger.warning(f"SMS commande {commande.numero_commande} non envoyé : {e}")
 
-    # Refresh pour retourner l'état final au client (avec checkout_url si Mobile Money)
     await db.refresh(commande)
-
     return commande
 
 

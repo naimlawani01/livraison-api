@@ -84,15 +84,30 @@ class SMSService:
         montant: float,
         tracking_url: str,
         checkout_url: Optional[str] = None,
+        position_required: bool = False,
     ) -> bool:
         """
         SMS unifié envoyé au client à la création de la commande.
 
-        Contient :
-        - Lien de suivi (toujours)
-        - Lien de paiement (si Mobile Money)
+        3 variantes selon l'état :
+        - position_required=True : on a besoin que le client partage sa
+          position pour calculer le prix. Le lien envoyé est /loc/{token}
+          qui guide le client (partage → prix → paiement ou tracking).
+        - checkout_url donné : Mobile Money, prix connu, lien paiement +
+          tracking dans le SMS.
+        - Sinon : Cash, prix connu, lien tracking uniquement.
         """
         prenom = nom_client.split()[0] if nom_client else "Bonjour"
+
+        if position_required:
+            message = (
+                f"Bonjour {prenom}, {partenaire_nom} a une livraison pour vous "
+                f"(commande {numero_commande}).\n"
+                f"Partagez votre position pour qu'on calcule le prix et "
+                f"qu'on vous livre :\n{tracking_url}"
+            )
+            return self._send(telephone, message)
+
         montant_fmt = f"{int(montant):,}".replace(",", " ") + " GNF"
 
         if checkout_url:

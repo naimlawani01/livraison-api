@@ -36,6 +36,7 @@ class CommandeCreate(CommandeBase):
     prix_propose: float = Field(..., gt=0, description="Prix proposé pour la livraison")
     mode_paiement: ModePaiement = Field(default=ModePaiement.CASH, description="Mode de paiement")
     exige_code_livraison: Optional[bool] = Field(default=False, description="Exiger un code PIN à la livraison")
+    nature_colis: str = Field(default="standard", description="standard | alimentaire | fragile | documents | volumineux")
 
 
 class CommandeUpdate(BaseModel):

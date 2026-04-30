@@ -73,6 +73,10 @@ class Commande(Base):
     # Distance
     distance_km = Column(Float, nullable=True)
     duree_estimee_minutes = Column(Integer, nullable=True)
+
+    # Nature du colis — utilisée pour recalculer le prix après partage GPS
+    # Valeurs : standard | alimentaire | fragile | documents | volumineux
+    nature_colis = Column(String(50), default="standard", nullable=False)
     
     # Statut
     status = Column(SQLEnum(CommandeStatus), default=CommandeStatus.CREEE, nullable=False)
