@@ -30,7 +30,7 @@ firebase-admin==6.4.0
 httpx==0.26.0
 
 # SMS / OTP — Nimba SMS (provider local Guinée)
-nimbasms==1.0.5
+nimbasms==1.0.2
 
 # Redis for caching
 redis==5.0.1
