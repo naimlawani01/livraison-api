@@ -331,10 +331,7 @@ async def get_commandes_disponibles(
     query = (
         select(Commande, Partenaire)
         .join(Partenaire, Commande.partenaire_id == Partenaire.id)
-        .where(or_(
-            Commande.status == CommandeStatus.DIFFUSEE,
-            Commande.status == CommandeStatus.CREEE
-        ))
+        .where(Commande.status == CommandeStatus.DIFFUSEE)
         .order_by(Commande.created_at.desc())
     )
     result = await db.execute(query)

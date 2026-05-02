@@ -63,15 +63,18 @@ async def initier_paiement(
     """
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
-        "gateway": "cinetpay",           # Forcé : on passe par CinetPay
         "description": description[:500],
         "metadata": {
             "commande_id": commande_id,
             "partenaire_id": partenaire_id,
         },
     }
-    # Note: pas de "currency" — GeniusPay accepte seulement XOF/EUR/USD,
-    # GNF n'est pas dans la liste. Le défaut XOF est appliqué côté GeniusPay.
+    # Notes :
+    # - "currency" : GeniusPay accepte seulement XOF/EUR/USD, GNF non listé.
+    #   Le défaut XOF est appliqué côté GeniusPay.
+    # - "gateway"  : valeurs valides selon doc = wave|pawapay|orange_money|
+    #   mtn_momo|moov_money. "cinetpay" n'est pas listé → on laisse vide
+    #   pour que GeniusPay route via sa page checkout multi-providers.
 
     # Le nom du client peut pré-remplir la page de checkout (optionnel)
     if nom_client:
@@ -82,18 +85,34 @@ async def initier_paiement(
     if error_url:
         payload["error_url"] = error_url
 
+    url = f"{BASE_URL}/payments"
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        resp = await client.post(
-            f"{BASE_URL}/payments",
-            headers=_collect_headers(),
-            json=payload,
-        )
+        resp = await client.post(url, headers=_collect_headers(), json=payload)
+
+    body_preview = (resp.text or "")[:300]
 
     if resp.status_code not in (200, 201):
-        logger.error("GeniusPay initier_paiement error %s: %s", resp.status_code, resp.text)
-        raise GeniusPayError(f"GeniusPay erreur {resp.status_code}: {resp.text}")
+        logger.error(
+            "GeniusPay initier_paiement %s — final_url=%s body=%s",
+            resp.status_code, resp.url, body_preview,
+        )
+        raise GeniusPayError(f"GeniusPay erreur {resp.status_code}: {body_preview}")
 
-    data = resp.json().get("data", {})
+    # Parsing JSON tolérant : si le serveur renvoie 200 mais avec du HTML
+    # (page de redirection silencieuse, mauvais path, etc.) on remonte une
+    # erreur claire au lieu d'un JSONDecodeError abscons.
+    try:
+        data = resp.json().get("data", {})
+    except ValueError:
+        logger.error(
+            "GeniusPay réponse non-JSON — final_url=%s body=%s",
+            resp.url, body_preview,
+        )
+        raise GeniusPayError(
+            f"GeniusPay a renvoyé une réponse non-JSON (final_url={resp.url}). "
+            f"Vérifier GENIUSPAY_BASE_URL et les clés API."
+        )
+
     return {
         "reference": data.get("reference"),
         "checkout_url": data.get("checkout_url") or data.get("payment_url"),
