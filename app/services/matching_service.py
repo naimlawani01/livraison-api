@@ -23,7 +23,8 @@ class MatchingService:
         db: AsyncSession,
         commande: Commande,
         partenaire_latitude: float,
-        partenaire_longitude: float
+        partenaire_longitude: float,
+        partenaire_nom: str = "Commerce"
     ) -> int:
         """
         Diffuser une commande aux livreurs proches.
@@ -81,7 +82,7 @@ class MatchingService:
             await notification_service.notifier_nouvelle_commande(
                 device_tokens=device_tokens,
                 numero_commande=commande.numero_commande,
-                partenaire_nom="Partenaire",
+                partenaire_nom=partenaire_nom,
                 prix=commande.prix_propose,
                 distance_km=livreurs_proches[0][1] if livreurs_proches else 0
             )

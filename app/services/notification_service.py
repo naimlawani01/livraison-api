@@ -116,10 +116,10 @@ class NotificationService:
         distance_km: float
     ):
         """Notifier les livreurs d'une nouvelle commande disponible"""
-        titre = "Nouvelle course disponible"
-        msg = f"{partenaire_nom} — {prix:.0f} FCFA — {distance_km:.1f} km"
+        titre = f"Nouvelle course — {prix:.0f} FCFA"
+        msg = f"{partenaire_nom} · à {distance_km:.1f} km"
         data = {"type": "nouvelle_commande", "numero_commande": numero_commande}
-        
+
         count = await self.envoyer_a_plusieurs(device_tokens, titre, msg, data)
         logger.info(f"Notification nouvelle commande envoyée à {count}/{len(device_tokens)} livreurs")
     
@@ -143,17 +143,16 @@ class NotificationService:
         numero_commande: str
     ):
         """Notifier un changement de statut de commande"""
-        status_messages = {
-            "EN_RECUPERATION": "Le livreur arrive au partenaire",
-            "EN_LIVRAISON": "Le livreur est en route vers le client",
-            "TERMINEE": "Livraison terminée avec succès",
-            "ANNULEE": "Livraison annulée"
+        status_notifs = {
+            "EN_RECUPERATION": ("Livreur en route", "Votre livreur se dirige vers le commerce"),
+            "EN_LIVRAISON":    ("Livraison en cours", "Le livreur est en route vers le client"),
+            "TERMINEE":        ("Livraison terminée !", "La commande a bien été livrée"),
+            "ANNULEE":         ("Course annulée", "La livraison a été annulée"),
         }
-        
-        msg = status_messages.get(status, f"Statut mis à jour : {status}")
-        titre = f"Commande #{numero_commande}"
+
+        titre, msg = status_notifs.get(status, ("Mise à jour", f"Statut : {status}"))
         data = {"type": "changement_status", "numero_commande": numero_commande, "status": status}
-        
+
         await self.envoyer_notification_push(device_token, titre, msg, data)
 
 

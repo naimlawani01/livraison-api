@@ -233,11 +233,13 @@ async def create_commande(
                 logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
                 await MatchingService.diffuser_commande(
                     db, commande, partenaire.latitude, partenaire.longitude,
+                    partenaire_nom=partenaire.nom,
                 )
         else:
             # Cash → diffuser immédiatement
             await MatchingService.diffuser_commande(
                 db, commande, partenaire.latitude, partenaire.longitude,
+                partenaire_nom=partenaire.nom,
             )
     # else : position absente → on ne diffuse PAS, on attend que le client
     # partage sa position via /loc/{token} qui s'occupera du calcul prix +

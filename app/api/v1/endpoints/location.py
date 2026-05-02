@@ -190,6 +190,7 @@ async def submit_location(
             if commande.status == CommandeStatus.CREEE and partenaire:
                 await MatchingService.diffuser_commande(
                     db, commande, partenaire.latitude, partenaire.longitude,
+                    partenaire_nom=partenaire.nom,
                 )
 
     # ── 4. Diffuser la commande si Cash et pas déjà diffusée ───────────
@@ -200,6 +201,7 @@ async def submit_location(
     ):
         await MatchingService.diffuser_commande(
             db, commande, partenaire.latitude, partenaire.longitude,
+            partenaire_nom=partenaire.nom,
         )
 
     return {

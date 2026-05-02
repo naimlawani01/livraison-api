@@ -150,7 +150,8 @@ async def webhook_geniuspay(
 
         if partenaire:
             await MatchingService.diffuser_commande(
-                db, commande, partenaire.latitude, partenaire.longitude
+                db, commande, partenaire.latitude, partenaire.longitude,
+                partenaire_nom=partenaire.nom,
             )
         else:
             logger.error("payment.success — partenaire introuvable pour commande %s", commande_id)

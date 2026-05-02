@@ -35,6 +35,21 @@ class UserBase(BaseModel):
     phone: str = Field(..., description="Numéro guinéen au format +224XXXXXXXXX")
 
 
+_WEAK_PASSWORDS = {"12345678", "87654321", "password", "azerty123", "qwerty123", "00000000", "11111111"}
+
+
+def _check_password_strength(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    if len(value) < 8:
+        raise ValueError("Le mot de passe doit contenir au moins 8 caractères")
+    if len(set(value)) == 1:
+        raise ValueError("Mot de passe trop simple")
+    if value.lower() in _WEAK_PASSWORDS:
+        raise ValueError("Ce mot de passe est trop courant, choisissez-en un autre")
+    return value
+
+
 class UserCreate(BaseModel):
     """Schéma pour créer un utilisateur"""
     phone: str = Field(..., description="Numéro guinéen")
@@ -42,6 +57,7 @@ class UserCreate(BaseModel):
     password: Optional[str] = None
 
     _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
+    _validate_password = field_validator("password")(lambda cls, v: _check_password_strength(v))
 
 
 class UserLogin(BaseModel):
