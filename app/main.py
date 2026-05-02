@@ -126,14 +126,21 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application"""
     # Startup
-    logger.info("Starting application...")
+    logger.warning("Starting application...")
     await init_db()
-    logger.info("Database initialized")
-    
+    logger.warning("Database initialized")
+
     # Initialize Redis Pub/Sub
     from .core.redis import redis_client
     await manager.initialize(redis_client)
-    logger.info("Redis ConnectionManager initialized")
+    logger.warning("Redis ConnectionManager initialized")
+
+    # Vérifier Firebase Admin SDK
+    from .services.notification_service import notification_service
+    if notification_service.firebase_app:
+        logger.warning("[Firebase] Admin SDK OK — push notifications actives")
+    else:
+        logger.warning("[Firebase] ATTENTION : Admin SDK non configuré — push notifications DÉSACTIVÉES. Ajouter FIREBASE_CREDENTIALS dans les variables d'environnement.")
     
     yield
     
@@ -206,9 +213,11 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Vérification de santé de l'API"""
+    from .services.notification_service import notification_service
     return {
         "status": "healthy",
-        "version": settings.APP_VERSION
+        "version": settings.APP_VERSION,
+        "firebase_push": "ok" if notification_service.firebase_app else "disabled"
     }
 
 
