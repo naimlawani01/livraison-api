@@ -107,7 +107,7 @@ class MatchingService:
             True si succès, False sinon
         """
         # Vérifier que la commande est disponible (CREEE ou DIFFUSEE)
-        if commande.status not in (CommandeStatus.CREEE, CommandeStatus.DIFFUSEE):
+        if commande.status != CommandeStatus.DIFFUSEE:
             logger.warning(f"Commande {commande.numero_commande} déjà acceptée ou invalide (status={commande.status})")
             return False
         

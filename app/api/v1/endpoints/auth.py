@@ -11,6 +11,7 @@ from ....core.security import (
     generate_otp
 )
 from ....models.user import User
+from ....models.livreur import Livreur
 from ....schemas.user import (
     UserCreate,
     UserLogin,
@@ -258,5 +259,12 @@ async def update_device_token(
 ):
     """Enregistrer/mettre à jour le device token pour les notifications push"""
     current_user.device_token = token_data.device_token
+
+    # Propager aussi sur le profil Livreur si l'utilisateur en est un
+    result = await db.execute(select(Livreur).where(Livreur.user_id == current_user.id))
+    livreur = result.scalar_one_or_none()
+    if livreur:
+        livreur.device_token = token_data.device_token
+
     await db.commit()
     return {"message": "Device token enregistré"}
