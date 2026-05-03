@@ -195,10 +195,10 @@ async def create_commande(
         distance_km=distance_km,
         duree_estimee_minutes=duree_estimee,
         status=CommandeStatus.CREEE,
-        tracking_token=secrets.token_urlsafe(32),
+        tracking_token=secrets.token_hex(10),
         # Toujours générer un location_token — il sert même si la position
         # est connue (le client peut malgré tout consulter / corriger).
-        location_token=secrets.token_urlsafe(32),
+        location_token=secrets.token_hex(10),
         exige_code_livraison=commande_data.exige_code_livraison,
         code_livraison=code_livraison,
     )

@@ -47,7 +47,7 @@ async def generate_tracking_link(
     if commande.tracking_token:
         token = commande.tracking_token
     else:
-        token = secrets.token_urlsafe(32)
+        token = secrets.token_hex(10)
         commande.tracking_token = token
         await db.commit()
 
