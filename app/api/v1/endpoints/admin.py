@@ -116,7 +116,14 @@ async def get_livreurs_en_attente(
             "email": l.email,
             "phone": l.user.phone if l.user else None,
             "type_vehicule": l.type_vehicule,
-            "created_at": l.created_at
+            "plaque_immatriculation": l.plaque_immatriculation,
+            "created_at": l.created_at,
+            # Documents
+            "piece_identite_url": l.piece_identite_url,
+            "vehicule_doc_url": l.vehicule_doc_url,
+            "vehicule_doc_type": l.vehicule_doc_type,
+            "photo_profil_url": l.photo_profil_url,
+            "docs_complets": bool(l.piece_identite_url and l.vehicule_doc_url and l.photo_profil_url),
         }
         for l in livreurs
     ]
@@ -141,16 +148,40 @@ async def valider_livreur(
     
     livreur.is_verified = True
     livreur.verified_at = datetime.now(timezone.utc)
-    
+
     user_query = select(User).where(User.id == livreur.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
         user.is_verified = True
-    
+
     await db.commit()
-    
     return {"message": "Livreur validé avec succès"}
+
+
+@router.post("/livreurs/{livreur_id}/rejeter")
+async def rejeter_livreur(
+    livreur_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Rejeter le dossier d'un livreur avec motif."""
+    query = select(Livreur).where(Livreur.id == livreur_id)
+    result = await db.execute(query)
+    livreur = result.scalar_one_or_none()
+    if not livreur:
+        raise HTTPException(status_code=404, detail="Livreur non trouvé")
+
+    # Effacer les documents pour que le livreur puisse les renvoyer
+    livreur.piece_identite_url = None
+    livreur.vehicule_doc_url = None
+    livreur.vehicule_doc_type = None
+    livreur.photo_profil_url = None
+    await db.commit()
+
+    # TODO: envoyer une notification push au livreur avec body.get("motif")
+    return {"message": "Dossier rejeté", "motif": body.get("motif", "")}
 
 
 @router.post("/livreurs/{livreur_id}/suspendre")
@@ -237,6 +268,9 @@ async def get_partenaires_en_attente(
             "phone": r.user.phone if r.user else None,
             "type_partenaire": r.type_partenaire,
             "created_at": r.created_at,
+            # Document
+            "devanture_url": r.devanture_url,
+            "docs_complets": bool(r.devanture_url),
         }
         for r in partenaires
     ]
@@ -260,16 +294,34 @@ async def valider_partenaire(
         )
     
     partenaire.is_verified = True
-    
+
     user_query = select(User).where(User.id == partenaire.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
         user.is_verified = True
-    
+
     await db.commit()
-    
     return {"message": "Partenaire validé avec succès"}
+
+
+@router.post("/partenaires/{partenaire_id}/rejeter")
+async def rejeter_partenaire(
+    partenaire_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Rejeter le dossier d'un partenaire avec motif."""
+    query = select(Partenaire).where(Partenaire.id == partenaire_id)
+    result = await db.execute(query)
+    partenaire = result.scalar_one_or_none()
+    if not partenaire:
+        raise HTTPException(status_code=404, detail="Partenaire non trouvé")
+
+    partenaire.devanture_url = None
+    await db.commit()
+    return {"message": "Dossier rejeté", "motif": body.get("motif", "")}
 
 
 @router.post("/partenaires/{partenaire_id}/suspendre")

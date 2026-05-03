@@ -17,9 +17,10 @@ class Livreur(Base):
     nom_complet = Column(String(255), nullable=False)
     email = Column(String(255), nullable=True)
     
-    # Documents (stocker les URLs/chemins)
+    # Documents (URLs Cloudflare R2)
     piece_identite_url = Column(String(500), nullable=True)
-    permis_conduire_url = Column(String(500), nullable=True)
+    vehicule_doc_url = Column(String(500), nullable=True)   # permis conduite OU carte grise
+    vehicule_doc_type = Column(String(20), nullable=True)   # "permis_conduire" | "carte_grise"
     photo_profil_url = Column(String(500), nullable=True)
     
     # Véhicule

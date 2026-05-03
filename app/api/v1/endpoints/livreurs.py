@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
-from pathlib import Path
 from ....core.database import get_db
 from ....models.livreur import Livreur
 from ....models.user import User
@@ -15,6 +14,7 @@ from ....schemas.livreur import (
     LivreurDisponibiliteUpdate
 )
 from ....utils.dependencies import get_current_user, get_current_livreur
+from ....services.storage_service import storage_service
 
 router = APIRouter()
 
@@ -235,45 +235,45 @@ async def get_livreur(
 
 @router.post("/upload-document")
 async def upload_document(
-    document_type: str,
+    document_type: str = Form(...),
+    vehicule_doc_type: Optional[str] = Form(None),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Uploader un document (pièce d'identité, permis de conduire, photo de profil)"""
-    # Valider le type de document
-    valid_types = ["piece_identite", "permis_conduire", "photo_profil"]
+    """
+    Uploader un document vers Cloudflare R2.
+    document_type : "piece_identite" | "vehicule_doc" | "photo_profil"
+    vehicule_doc_type (requis si document_type=vehicule_doc) : "permis_conduire" | "carte_grise"
+    """
+    valid_types = ["piece_identite", "vehicule_doc", "photo_profil"]
     if document_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Type invalide. Choisissez parmi : {', '.join(valid_types)}"
-        )
-    
-    # Récupérer le profil livreur
+        raise HTTPException(status_code=400, detail=f"Type invalide. Choisissez parmi : {', '.join(valid_types)}")
+
+    if document_type == "vehicule_doc":
+        if vehicule_doc_type not in ("permis_conduire", "carte_grise"):
+            raise HTTPException(status_code=400, detail="vehicule_doc_type doit être 'permis_conduire' ou 'carte_grise'")
+
     query = select(Livreur).where(Livreur.user_id == current_user.id)
     result = await db.execute(query)
     livreur = result.scalar_one_or_none()
     if not livreur:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil livreur non trouvé"
-        )
-    
-    # Sauvegarder le fichier
-    upload_dir = Path("uploads/documents")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    ext = Path(file.filename).suffix if file.filename else ".jpg"
-    filename = f"{livreur.id}_{document_type}{ext}"
-    filepath = upload_dir / filename
-    
-    with open(filepath, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
-    # Mettre à jour l'URL dans le profil
-    url = f"/uploads/documents/{filename}"
-    setattr(livreur, f"{document_type}_url", url)
+        raise HTTPException(status_code=404, detail="Profil livreur non trouvé")
+
+    content = await file.read()
+    content_type = file.content_type or "image/jpeg"
+    url = await storage_service.upload_document(
+        file_data=content,
+        folder="livreurs",
+        original_filename=file.filename or f"{document_type}.jpg",
+        content_type=content_type,
+    )
+
+    if document_type == "vehicule_doc":
+        livreur.vehicule_doc_url = url
+        livreur.vehicule_doc_type = vehicule_doc_type
+    else:
+        setattr(livreur, f"{document_type}_url", url)
+
     await db.commit()
-    
     return {"message": "Document uploadé avec succès", "url": url}

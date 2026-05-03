@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -11,6 +11,7 @@ from ....schemas.partenaire import (
     PartenaireResponse
 )
 from ....utils.dependencies import get_current_user, get_current_partenaire
+from ....services.storage_service import storage_service
 
 router = APIRouter()
 
@@ -131,11 +132,31 @@ async def get_partenaire(
     query = select(Partenaire).where(Partenaire.id == partenaire_id)
     result = await db.execute(query)
     partenaire = result.scalar_one_or_none()
-    
+
     if not partenaire:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Partenaire non trouvé"
         )
-    
+
     return partenaire
+
+
+@router.post("/me/upload-document")
+async def upload_devanture(
+    file: UploadFile = File(...),
+    partenaire: Partenaire = Depends(get_current_partenaire),
+    db: AsyncSession = Depends(get_db)
+):
+    """Uploader la photo de la devanture du commerce vers Cloudflare R2."""
+    content = await file.read()
+    url = await storage_service.upload_document(
+        file_data=content,
+        folder="partenaires",
+        original_filename=file.filename or "devanture.jpg",
+        content_type=file.content_type or "image/jpeg",
+    )
+    partenaire.devanture_url = url
+    await db.commit()
+    return {"message": "Document uploadé avec succès", "url": url}
+

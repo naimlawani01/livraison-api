@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # Firebase
     FIREBASE_CREDENTIALS: Optional[str] = None
     FIREBASE_CREDENTIALS_PATH: Optional[str] = None
+
+    # Cloudflare R2 (stockage documents)
+    R2_ACCOUNT_ID: Optional[str] = None
+    R2_ACCESS_KEY_ID: Optional[str] = None
+    R2_SECRET_ACCESS_KEY: Optional[str] = None
+    R2_BUCKET_NAME: str = "sonaiyaa-documents"
+    R2_PUBLIC_URL: Optional[str] = None  # ex: https://pub-xxx.r2.dev
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
