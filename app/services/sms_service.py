@@ -106,7 +106,7 @@ class SMSService:
         prenom = nom_client.split()[0] if nom_client else "Bonjour"
 
         if position_required:
-            message = f"Livraison {partenaire_nom}. Position : {tracking_url}"
+            message = f"Livraison {partenaire_nom}. Partagez votre position : {tracking_url}"
             return await self._send(telephone, message)
 
         montant_fmt = f"{int(montant):,}".replace(",", " ") + "GNF"
