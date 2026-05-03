@@ -108,9 +108,8 @@ class SMSService:
         if position_required:
             message = (
                 f"Bonjour {prenom}, {partenaire_nom} a une livraison pour vous "
-                f"(commande {numero_commande}).\n"
-                f"Partagez votre position pour qu'on calcule le prix et "
-                f"qu'on vous livre :\n{tracking_url}"
+                f"(commande {numero_commande}). "
+                f"Partagez votre position pour calculer le prix : {tracking_url}"
             )
             return await self._send(telephone, message)
 
@@ -118,17 +117,13 @@ class SMSService:
 
         if checkout_url:
             message = (
-                f"Bonjour {prenom}, votre commande {numero_commande} chez "
-                f"{partenaire_nom} ({montant_fmt}) est en cours.\n"
-                f"Payer : {checkout_url}\n"
-                f"Suivre : {tracking_url}"
+                f"Bonjour {prenom}, commande {numero_commande} chez {partenaire_nom} "
+                f"({montant_fmt}). Payer : {checkout_url}"
             )
         else:
             message = (
-                f"Bonjour {prenom}, votre commande {numero_commande} chez "
-                f"{partenaire_nom} ({montant_fmt}) est en cours.\n"
-                f"À régler en espèces à la livraison.\n"
-                f"Suivre : {tracking_url}"
+                f"Bonjour {prenom}, commande {numero_commande} chez {partenaire_nom} "
+                f"({montant_fmt}). Especes a la livraison. Suivre : {tracking_url}"
             )
 
         return await self._send(telephone, message)

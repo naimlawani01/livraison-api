@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # URL publique du backend — pour construire les liens envoyés par SMS
     # (tracking, paiement, partage de position). Override via env en prod.
-    PUBLIC_BASE_URL: str = "https://ample-mindfulness-production.up.railway.app"
+    PUBLIC_BASE_URL: str = "https://api.sonaiyaa.fr"
     
     # Database
     DATABASE_URL: str
