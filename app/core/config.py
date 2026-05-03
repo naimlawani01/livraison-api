@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     # SMS — PasseInfo (provider local Guinée)
     PASSEINFO_API_KEY: Optional[str] = None
     PASSEINFO_CLIENT_ID: Optional[str] = None
-    PASSEINFO_SENDER_NAME: str = "Sonaiyaa"  # nom expéditeur enregistré sur PasseInfo (3–11 chars)
     
     # Firebase
     FIREBASE_CREDENTIALS: Optional[str] = None

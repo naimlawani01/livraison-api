@@ -33,10 +33,9 @@ class SMSService:
     def __init__(self):
         self.api_key: Optional[str] = settings.PASSEINFO_API_KEY
         self.client_id: Optional[str] = settings.PASSEINFO_CLIENT_ID
-        self.sender_name: str = settings.PASSEINFO_SENDER_NAME
         self._configured = bool(self.api_key and self.client_id)
         if self._configured:
-            logger.info("PasseInfo SMS initialisé (sender: %s)", self.sender_name)
+            logger.info("PasseInfo SMS initialisé")
         else:
             logger.warning("PasseInfo SMS non configuré — les SMS seront loggés en dev mode")
 
@@ -54,9 +53,7 @@ class SMSService:
             return True
 
         contact = _to_passeinfo_format(telephone)
-        payload: dict = {"message": message, "contact": contact}
-        if self.sender_name:
-            payload["senderName"] = self.sender_name
+        payload = {"message": message, "contact": contact}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
