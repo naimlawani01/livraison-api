@@ -425,6 +425,53 @@ async def get_tous_partenaires(
     ]
 
 
+@router.get("/partenaires/{partenaire_id}", response_model=dict)
+async def get_partenaire_detail(
+    partenaire_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Obtenir le détail complet d'un partenaire"""
+    from sqlalchemy.orm import selectinload
+
+    query = select(Partenaire).options(selectinload(Partenaire.user)).where(Partenaire.id == partenaire_id)
+    result = await db.execute(query)
+    r = result.scalar_one_or_none()
+
+    if not r:
+        raise HTTPException(status_code=404, detail="Partenaire non trouvé")
+
+    commandes_count = await db.execute(
+        select(func.count(Commande.id)).where(
+            Commande.partenaire_id == r.id,
+            Commande.status == CommandeStatus.TERMINEE
+        )
+    )
+    nombre_commandes_terminees = commandes_count.scalar() or 0
+
+    return {
+        "id": str(r.id),
+        "nom": r.nom,
+        "description": r.description,
+        "adresse": r.adresse,
+        "type_partenaire": r.type_partenaire,
+        "email": r.email,
+        "phone": r.user.phone if r.user else None,
+        "telephone_secondaire": r.telephone_secondaire,
+        "latitude": r.latitude,
+        "longitude": r.longitude,
+        "is_open": r.is_open,
+        "is_verified": r.is_verified,
+        "note_moyenne": r.note_moyenne,
+        "nombre_evaluations": r.nombre_evaluations,
+        "nombre_commandes_terminees": nombre_commandes_terminees,
+        "devanture_url": r.devanture_url,
+        "docs_complets": bool(r.devanture_url),
+        "horaires": r.horaires,
+        "created_at": r.created_at,
+    }
+
+
 @router.get("/commandes/recentes", response_model=List[dict])
 async def get_commandes_recentes(
     admin: User = Depends(get_current_admin),
