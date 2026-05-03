@@ -42,8 +42,8 @@ class SMSService:
 
     def _headers(self) -> dict:
         return {
-            "api_key": self.api_key,
-            "client_id": self.client_id,
+            "api-key": self.api_key,
+            "client-id": self.client_id,
             "Content-Type": "application/json",
         }
 
@@ -54,7 +54,9 @@ class SMSService:
             return True
 
         contact = _to_passeinfo_format(telephone)
-        payload = {"message": message, "contact": contact, "senderName": self.sender_name}
+        payload: dict = {"message": message, "contact": contact}
+        if self.sender_name:
+            payload["senderName"] = self.sender_name
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
