@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -143,20 +143,44 @@ async def get_partenaire(
 
 
 @router.post("/me/upload-document")
-async def upload_devanture(
+async def upload_document(
     file: UploadFile = File(...),
+    document_type: str = Form("devanture"),  # "devanture" | "rccm"
     partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
-    """Uploader la photo de la devanture du commerce vers Cloudflare R2."""
+    """Uploader un document partenaire vers Cloudflare R2.
+
+    document_type: "devanture" (photo de la devanture) ou "rccm" (registre du commerce).
+    """
+    if document_type not in ("devanture", "rccm"):
+        raise HTTPException(status_code=400, detail="document_type doit être 'devanture' ou 'rccm'.")
+
+    content_type = file.content_type or "application/octet-stream"
+    allowed_types = {
+        "image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif", "image/webp",
+        "application/pdf",
+    }
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Format non supporté. Utilisez une image (JPG, PNG, HEIC) ou un PDF.")
+
+    if document_type == "devanture" and content_type == "application/pdf":
+        raise HTTPException(status_code=400, detail="La photo de devanture doit être une image (pas un PDF).")
+
     content = await file.read()
+    ext_default = "pdf" if content_type == "application/pdf" else "jpg"
     url = await storage_service.upload_document(
         file_data=content,
         folder="partenaires",
-        original_filename=file.filename or "devanture.jpg",
-        content_type=file.content_type or "image/jpeg",
+        original_filename=file.filename or f"{document_type}.{ext_default}",
+        content_type=content_type,
     )
-    partenaire.devanture_url = url
+
+    if document_type == "rccm":
+        partenaire.rccm_url = url
+    else:
+        partenaire.devanture_url = url
+
     await db.commit()
-    return {"message": "Document uploadé avec succès", "url": url}
+    return {"message": "Document uploadé avec succès", "url": url, "document_type": document_type}
 

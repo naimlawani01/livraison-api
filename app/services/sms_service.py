@@ -1,67 +1,75 @@
-"""Service d'envoi de SMS via Nimba SMS (provider local Guinée).
+"""Service d'envoi de SMS via PasseInfo (provider local Guinée).
 
-Nimba attend les numéros au format `224XXXXXXXXX` (sans `+`). On normalise
-en interne — l'appelant peut passer le format `+224XXXXXXXXX` sans souci.
+PasseInfo attend les numéros au format `6XXXXXXXX` (9 chiffres, sans indicatif).
+On normalise en interne — l'appelant peut passer `+224XXXXXXXXX` ou `224XXXXXXXXX`.
 """
 import logging
 from typing import Optional
 
-from nimbasms import Client
+import httpx
 
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
+PASSEINFO_BASE_URL = "https://api.passeinfo.com/v1"
 
-def _to_nimba_format(phone: str) -> str:
-    """Convertit `+224XXXXXXXXX` → `224XXXXXXXXX` (Nimba veut sans `+`)."""
-    if phone.startswith("+"):
-        return phone[1:]
-    return phone
+
+def _to_passeinfo_format(phone: str) -> str:
+    """Convertit tout format → `6XXXXXXXX` (9 chiffres, sans indicatif)."""
+    p = phone.strip()
+    if p.startswith("+224"):
+        p = p[4:]
+    elif p.startswith("224"):
+        p = p[3:]
+    elif p.startswith("+"):
+        p = p[1:]
+    return p  # doit matcher ^6\d{8}$
 
 
 class SMSService:
-    """Service d'envoi de SMS via Nimba."""
+    """Service d'envoi de SMS via PasseInfo."""
 
     def __init__(self):
-        self.client: Optional[Client] = None
-        self.sender_name: str = settings.NIMBASMS_SENDER_NAME
-        self._initialize()
+        self.api_key: Optional[str] = settings.PASSEINFO_API_KEY
+        self.client_id: Optional[str] = settings.PASSEINFO_CLIENT_ID
+        self.sender_name: str = settings.PASSEINFO_SENDER_NAME
+        self._configured = bool(self.api_key and self.client_id)
+        if self._configured:
+            logger.info("PasseInfo SMS initialisé (sender: %s)", self.sender_name)
+        else:
+            logger.warning("PasseInfo SMS non configuré — les SMS seront loggés en dev mode")
 
-    def _initialize(self):
-        if not (settings.NIMBASMS_ACCOUNT_SID and settings.NIMBASMS_AUTH_TOKEN):
-            logger.warning("Nimba SMS non configuré — les SMS seront loggés en dev mode")
-            return
-        try:
-            self.client = Client(
-                settings.NIMBASMS_ACCOUNT_SID,
-                settings.NIMBASMS_AUTH_TOKEN,
-            )
-            logger.info("Nimba SMS initialisé (sender: %s)", self.sender_name)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Nimba SMS init failed: %s", e)
+    def _headers(self) -> dict:
+        return {
+            "api_key": self.api_key,
+            "client_id": self.client_id,
+            "Content-Type": "application/json",
+        }
 
-    # ── Helper interne ────────────────────────────────────────────────────
-
-    def _send(self, telephone: str, message: str) -> bool:
+    async def _send(self, telephone: str, message: str) -> bool:
         """Envoi brut. Retourne True si succès."""
-        if not self.client:
+        if not self._configured:
             logger.info("[DEV MODE] SMS pour %s: %s", telephone, message)
             return True
 
+        contact = _to_passeinfo_format(telephone)
+        payload = {"message": message, "contact": contact, "senderName": self.sender_name}
+
         try:
-            response = self.client.messages.create(
-                to=[_to_nimba_format(telephone)],
-                sender_name=self.sender_name,
-                message=message,
-            )
-            if response.ok:
-                logger.info("SMS envoyé à %s", telephone)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{PASSEINFO_BASE_URL}/message/single_message",
+                    json=payload,
+                    headers=self._headers(),
+                )
+            if response.status_code == 200:
+                logger.info("SMS envoyé à %s (id: %s)", telephone, response.json().get("messageId"))
                 return True
-            logger.error("SMS Nimba échec pour %s: %s", telephone, response.data)
+            logger.error("PasseInfo SMS échec pour %s: %s %s", telephone, response.status_code, response.text)
             return False
         except Exception as e:  # noqa: BLE001
-            logger.error("Erreur envoi SMS Nimba à %s: %s", telephone, e)
+            logger.error("Erreur envoi SMS PasseInfo à %s: %s", telephone, e)
             return False
 
     # ── API publique ──────────────────────────────────────────────────────
@@ -69,10 +77,10 @@ class SMSService:
     async def envoyer_otp(self, telephone: str, code_otp: str) -> bool:
         """Envoyer un code OTP à 6 chiffres."""
         message = (
-            f"Sönaiya — votre code de vérification : {code_otp}\n"
+            f"Sönaiyaa — votre code de vérification : {code_otp}\n"
             f"Valide 5 minutes. Ne le partagez avec personne."
         )
-        return self._send(telephone, message)
+        return await self._send(telephone, message)
 
     async def envoyer_sms_commande(
         self,
@@ -91,8 +99,7 @@ class SMSService:
 
         3 variantes selon l'état :
         - position_required=True : on a besoin que le client partage sa
-          position pour calculer le prix. Le lien envoyé est /loc/{token}
-          qui guide le client (partage → prix → paiement ou tracking).
+          position pour calculer le prix.
         - checkout_url donné : Mobile Money, prix connu, lien paiement +
           tracking dans le SMS.
         - Sinon : Cash, prix connu, lien tracking uniquement.
@@ -106,7 +113,7 @@ class SMSService:
                 f"Partagez votre position pour qu'on calcule le prix et "
                 f"qu'on vous livre :\n{tracking_url}"
             )
-            return self._send(telephone, message)
+            return await self._send(telephone, message)
 
         montant_fmt = f"{int(montant):,}".replace(",", " ") + " GNF"
 
@@ -125,7 +132,7 @@ class SMSService:
                 f"Suivre : {tracking_url}"
             )
 
-        return self._send(telephone, message)
+        return await self._send(telephone, message)
 
 
 # Instance singleton

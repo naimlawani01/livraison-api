@@ -38,8 +38,9 @@ class Partenaire(Base):
     # Horaires (format JSON)
     horaires = Column(JSON, nullable=True)
     
-    # Document de vérification
-    devanture_url = Column(String(500), nullable=True)  # photo de la devanture du commerce
+    # Documents de vérification
+    devanture_url = Column(String(500), nullable=True)  # photo de la devanture
+    rccm_url = Column(String(500), nullable=True)       # RCCM (entités formelles)
 
     # Statut
     is_open = Column(Boolean, default=True)

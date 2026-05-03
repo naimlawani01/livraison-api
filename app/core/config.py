@@ -32,10 +32,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480   # 8h
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     
-    # SMS — Nimba SMS (provider local Guinée)
-    NIMBASMS_ACCOUNT_SID: Optional[str] = None
-    NIMBASMS_AUTH_TOKEN: Optional[str] = None
-    NIMBASMS_SENDER_NAME: str = "SONAIYA"  # nom expéditeur validé sur Nimba
+    # SMS — PasseInfo (provider local Guinée)
+    PASSEINFO_API_KEY: Optional[str] = None
+    PASSEINFO_CLIENT_ID: Optional[str] = None
+    PASSEINFO_SENDER_NAME: str = "Sonaiyaa"  # nom expéditeur enregistré sur PasseInfo (3–11 chars)
     
     # Firebase
     FIREBASE_CREDENTIALS: Optional[str] = None

@@ -260,12 +260,20 @@ async def upload_document(
     if not livreur:
         raise HTTPException(status_code=404, detail="Profil livreur non trouvé")
 
+    content_type = file.content_type or "application/octet-stream"
+    allowed_types = {
+        "image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif", "image/webp",
+        "application/pdf",
+    }
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Format non supporté. Utilisez une image (JPG, PNG, HEIC) ou un PDF.")
+
     content = await file.read()
-    content_type = file.content_type or "image/jpeg"
+    ext_default = "pdf" if content_type == "application/pdf" else "jpg"
     url = await storage_service.upload_document(
         file_data=content,
         folder="livreurs",
-        original_filename=file.filename or f"{document_type}.jpg",
+        original_filename=file.filename or f"{document_type}.{ext_default}",
         content_type=content_type,
     )
 

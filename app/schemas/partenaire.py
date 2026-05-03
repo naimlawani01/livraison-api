@@ -52,8 +52,10 @@ class PartenaireResponse(PartenaireBase):
     is_verified: bool
     note_moyenne: float
     nombre_evaluations: int
+    devanture_url: Optional[str] = None
+    rccm_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
