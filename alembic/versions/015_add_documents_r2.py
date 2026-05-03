@@ -1,14 +1,14 @@
 """add vehicule_doc to livreurs and devanture_url to partenaires
 
 Revision ID: 015
-Revises: 014
+Revises: 014_add_nature_colis
 Create Date: 2026-05-03
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = '015'
-down_revision = '014'
+down_revision = '014_add_nature_colis'
 branch_labels = None
 depends_on = None
 

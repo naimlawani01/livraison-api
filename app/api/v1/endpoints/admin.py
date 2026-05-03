@@ -247,6 +247,47 @@ async def get_tous_livreurs(
     ]
 
 
+@router.get("/livreurs/{livreur_id}", response_model=dict)
+async def get_livreur_detail(
+    livreur_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Obtenir le détail complet d'un livreur"""
+    from sqlalchemy.orm import selectinload
+
+    query = select(Livreur).options(selectinload(Livreur.user)).where(Livreur.id == livreur_id)
+    result = await db.execute(query)
+    l = result.scalar_one_or_none()
+
+    if not l:
+        raise HTTPException(status_code=404, detail="Livreur non trouvé")
+
+    return {
+        "id": str(l.id),
+        "nom_complet": l.nom_complet,
+        "email": l.email,
+        "phone": l.user.phone if l.user else None,
+        "type_vehicule": l.type_vehicule,
+        "plaque_immatriculation": l.plaque_immatriculation,
+        "marque_modele": l.marque_modele,
+        "is_disponible": l.is_disponible,
+        "is_en_course": l.is_en_course,
+        "is_verified": l.is_verified,
+        "note_moyenne": l.note_moyenne,
+        "nombre_courses_completees": l.nombre_courses_completees,
+        "nombre_evaluations": l.nombre_evaluations,
+        "total_gains": l.total_gains,
+        "solde_disponible": l.solde_disponible,
+        "piece_identite_url": l.piece_identite_url,
+        "vehicule_doc_url": l.vehicule_doc_url,
+        "vehicule_doc_type": l.vehicule_doc_type,
+        "photo_profil_url": l.photo_profil_url,
+        "docs_complets": bool(l.piece_identite_url and l.vehicule_doc_url and l.photo_profil_url),
+        "created_at": l.created_at,
+    }
+
+
 @router.get("/partenaires/en-attente", response_model=List[dict])
 async def get_partenaires_en_attente(
     admin: User = Depends(get_current_admin),
