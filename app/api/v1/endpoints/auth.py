@@ -23,8 +23,31 @@ from ....schemas.user import (
 )
 from ....services.sms_service import sms_service
 from ....utils.dependencies import get_current_user
+from ....core.redis import redis_client
 
 router = APIRouter()
+
+OTP_RATE_LIMIT = 3   # tentatives max
+OTP_RATE_WINDOW = 300  # 5 minutes
+
+
+async def _check_otp_rate_limit(phone: str) -> None:
+    """Bloque si trop de tentatives OTP pour ce numéro sur la fenêtre glissante."""
+    key = f"otp_rl:{phone}"
+    try:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, OTP_RATE_WINDOW)
+        if count > OTP_RATE_LIMIT:
+            ttl = await redis_client.ttl(key)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Trop de tentatives. Réessayez dans {ttl} secondes.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Redis indisponible → on laisse passer plutôt que bloquer
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -84,24 +107,25 @@ async def request_otp(
     db: AsyncSession = Depends(get_db)
 ):
     """Demander un code OTP"""
+    await _check_otp_rate_limit(otp_request.phone)
+
     query = select(User).where(User.phone == otp_request.phone)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
-    # Générer et envoyer OTP
+
     otp_code = generate_otp()
     user.otp_code = otp_code
     user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-    
+
     await db.commit()
     await sms_service.envoyer_otp(user.phone, otp_code)
-    
+
     return {"message": "Code OTP envoyé"}
 
 
@@ -111,17 +135,18 @@ async def verify_otp(
     db: AsyncSession = Depends(get_db)
 ):
     """Vérifier le code OTP et connecter l'utilisateur"""
+    await _check_otp_rate_limit(otp_verify.phone)
+
     query = select(User).where(User.phone == otp_verify.phone)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
-    # Vérifier le code OTP
+
     if user.otp_code != otp_verify.otp_code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

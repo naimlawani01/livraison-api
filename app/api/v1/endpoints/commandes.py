@@ -698,7 +698,10 @@ async def annuler_commande(
     
     # Notifier le livreur (si assigné) et le partenaire de l'annulation
     try:
-        # Notifier le livreur
+        raison = annulation.raison or ""
+        data = {"type": "commande_annulee", "numero_commande": commande.numero_commande, "raison": raison}
+
+        # Notifier le livreur assigné
         if commande.livreur_id:
             livreur_q = select(Livreur).where(Livreur.id == commande.livreur_id)
             livreur_r = await db.execute(livreur_q)
@@ -706,11 +709,18 @@ async def annuler_commande(
             if liv:
                 token = await _get_user_device_token(db, liv.user_id)
                 if token:
-                    await notification_service.notifier_changement_status(
-                        device_token=token,
-                        status="ANNULEE",
-                        numero_commande=commande.numero_commande,
+                    if is_partenaire_owner:
+                        msg_livreur = f"Le commerce a annulé la course #{commande.numero_commande}."
+                    elif is_admin:
+                        msg_livreur = f"La course #{commande.numero_commande} a été annulée par l'admin."
+                    else:
+                        msg_livreur = f"Course #{commande.numero_commande} annulée."
+                    if raison:
+                        msg_livreur += f" Motif : {raison}"
+                    await notification_service.envoyer_notification_push(
+                        token, titre="Course annulée", message=msg_livreur, data=data
                     )
+
         # Notifier le partenaire
         partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
         partenaire_r = await db.execute(partenaire_q)
@@ -718,10 +728,16 @@ async def annuler_commande(
         if partenaire_notif:
             token = await _get_user_device_token(db, partenaire_notif.user_id)
             if token:
-                await notification_service.notifier_changement_status(
-                    device_token=token,
-                    status="ANNULEE",
-                    numero_commande=commande.numero_commande,
+                if is_livreur_assigned:
+                    msg_partenaire = f"Le livreur a annulé la course #{commande.numero_commande}."
+                elif is_admin:
+                    msg_partenaire = f"La course #{commande.numero_commande} a été annulée par l'admin."
+                else:
+                    msg_partenaire = f"Course #{commande.numero_commande} annulée."
+                if raison:
+                    msg_partenaire += f" Motif : {raison}"
+                await notification_service.envoyer_notification_push(
+                    token, titre="Course annulée", message=msg_partenaire, data=data
                 )
     except Exception as e:
         logger.warning(f"Notification annulation échouée: {e}")

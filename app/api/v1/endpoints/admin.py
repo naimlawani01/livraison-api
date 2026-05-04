@@ -10,6 +10,7 @@ from ....models.livreur import Livreur
 from ....models.commande import Commande, CommandeStatus
 from ....models.wallet_transaction import WalletTransaction
 from ....utils.dependencies import get_current_admin
+from ....services.notification_service import notification_service
 
 router = APIRouter()
 
@@ -180,8 +181,16 @@ async def rejeter_livreur(
     livreur.photo_profil_url = None
     await db.commit()
 
-    # TODO: envoyer une notification push au livreur avec body.get("motif")
-    return {"message": "Dossier rejeté", "motif": body.get("motif", "")}
+    motif = body.get("motif", "")
+    if livreur.device_token:
+        msg = f"Motif : {motif}" if motif else "Veuillez renvoyer vos documents."
+        await notification_service.envoyer_notification_push(
+            livreur.device_token,
+            titre="Dossier non validé",
+            message=msg,
+            data={"type": "dossier_rejete", "motif": motif},
+        )
+    return {"message": "Dossier rejeté", "motif": motif}
 
 
 @router.post("/livreurs/{livreur_id}/suspendre")
@@ -361,8 +370,21 @@ async def rejeter_partenaire(
         raise HTTPException(status_code=404, detail="Partenaire non trouvé")
 
     partenaire.devanture_url = None
+    partenaire.rccm_url = None
     await db.commit()
-    return {"message": "Dossier rejeté", "motif": body.get("motif", "")}
+
+    motif = body.get("motif", "")
+    user_q = await db.execute(select(User).where(User.id == partenaire.user_id))
+    user = user_q.scalar_one_or_none()
+    if user and user.device_token:
+        msg = f"Motif : {motif}" if motif else "Veuillez renvoyer vos documents."
+        await notification_service.envoyer_notification_push(
+            user.device_token,
+            titre="Dossier non validé",
+            message=msg,
+            data={"type": "dossier_rejete", "motif": motif},
+        )
+    return {"message": "Dossier rejeté", "motif": motif}
 
 
 @router.post("/partenaires/{partenaire_id}/suspendre")
@@ -600,6 +622,14 @@ async def rejeter_retrait(
     livreur = livreur_r.scalar_one_or_none()
     if livreur:
         livreur.solde_disponible += txn.montant
+        if livreur.device_token:
+            montant_fmt = f"{int(txn.montant):,}".replace(",", " ")
+            await notification_service.envoyer_notification_push(
+                livreur.device_token,
+                titre="Retrait refusé",
+                message=f"Votre demande de {montant_fmt} GNF a été refusée. Le solde a été recrédité.",
+                data={"type": "retrait_refuse"},
+            )
     txn.statut = "refuse"
     await db.commit()
     return {"message": "Retrait refusé — solde remboursé au livreur"}
