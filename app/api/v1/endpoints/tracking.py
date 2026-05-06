@@ -616,6 +616,16 @@ function updateMap(data, vehiculeEmoji) {{
   const liv = data.livreur_position;
   const part = data.partenaire_position;
   const cli = data.client_position;
+  const isFinished = data.status === 'TERMINEE' || data.status === 'ANNULEE';
+
+  // Course terminée/annulée → on retire le livreur et la ligne de route
+  if (isFinished) {{
+    if (livreurMarker) {{ livreurMarker.remove(); livreurMarker = null; }}
+    if (routeLine) {{ routeLine.remove(); routeLine = null; }}
+    livreurTargetPos = null;
+    livreurDisplayPos = null;
+    if (animationFrameId) {{ cancelAnimationFrame(animationFrameId); animationFrameId = null; }}
+  }}
 
   if (!liv && !part && !cli) {{
     document.getElementById('mapEmpty').style.display = 'flex';
@@ -636,7 +646,7 @@ function updateMap(data, vehiculeEmoji) {{
     }}).addTo(map);
   }}
 
-  if (liv) {{
+  if (liv && !isFinished) {{
     livreurTargetPos = liv;
     if (!livreurMarker) {{
       livreurDisplayPos = {{ ...liv }};
@@ -649,9 +659,9 @@ function updateMap(data, vehiculeEmoji) {{
     animationFrameId = requestAnimationFrame(smoothMoveLivreur);
   }}
 
-  // Ligne reliant le livreur à sa destination courante (partenaire ou client)
-  const dest = (data.status === 'EN_LIVRAISON' || data.status === 'TERMINEE') ? cli : part;
-  if (liv && dest) {{
+  // Ligne reliant le livreur à sa destination courante (uniquement si en cours)
+  const dest = (data.status === 'EN_LIVRAISON') ? cli : part;
+  if (liv && dest && !isFinished) {{
     const coords = [[liv.latitude, liv.longitude], [dest.latitude, dest.longitude]];
     if (!routeLine) {{
       routeLine = L.polyline(coords, {{
@@ -662,14 +672,30 @@ function updateMap(data, vehiculeEmoji) {{
     }}
   }}
 
-  // Auto-fit
+  // Auto-fit : on tient compte du topbar et du bottom sheet pour ne pas masquer les markers
   const points = [];
-  if (liv) points.push([liv.latitude, liv.longitude]);
-  if (dest) points.push([dest.latitude, dest.longitude]);
+  if (isFinished) {{
+    if (part) points.push([part.latitude, part.longitude]);
+    if (cli) points.push([cli.latitude, cli.longitude]);
+  }} else {{
+    if (liv) points.push([liv.latitude, liv.longitude]);
+    if (dest) points.push([dest.latitude, dest.longitude]);
+  }}
+
+  const topbarEl = document.querySelector('.topbar');
+  const sheetEl = document.querySelector('.sheet');
+  const topPad = (topbarEl ? topbarEl.offsetHeight : 60) + 24;
+  const bottomPad = (sheetEl ? sheetEl.offsetHeight : 200) + 24;
+
   if (points.length === 1) {{
     map.setView(points[0], 15);
+    map.panBy([0, (topPad - bottomPad) / 2], {{ animate: true, duration: 0.4 }});
   }} else if (points.length > 1) {{
-    map.fitBounds(points, {{ padding: [80, 80], maxZoom: 16 }});
+    map.fitBounds(points, {{
+      paddingTopLeft: [40, topPad],
+      paddingBottomRight: [40, bottomPad],
+      maxZoom: 16,
+    }});
   }}
 }}
 
