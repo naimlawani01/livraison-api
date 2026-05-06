@@ -85,12 +85,18 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
     livreur_nom = None
     livreur_tel = None
     livreur_pos = None
+    livreur_photo = None
+    livreur_vehicule = None
+    livreur_note = None
     if commande.livreur_id:
         liv_q = select(Livreur).where(Livreur.id == commande.livreur_id)
         liv_r = await db.execute(liv_q)
         livreur = liv_r.scalar_one_or_none()
         if livreur:
             livreur_nom = livreur.nom_complet
+            livreur_photo = livreur.photo_profil_url
+            livreur_vehicule = livreur.type_vehicule
+            livreur_note = float(livreur.note_moyenne) if livreur.note_moyenne else None
             user_q = select(User).where(User.id == livreur.user_id)
             user_r = await db.execute(user_q)
             user = user_r.scalar_one_or_none()
@@ -136,9 +142,14 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
     return {
         "status": commande.status.value if hasattr(commande.status, 'value') else commande.status,
         "numero_commande": commande.numero_commande,
+        "client_nom": commande.contact_client_nom,
+        "adresse_client": commande.adresse_client,
         "livreur_nom": livreur_nom,
         "livreur_telephone": livreur_tel,
         "livreur_position": livreur_pos,
+        "livreur_photo": livreur_photo,
+        "livreur_vehicule": livreur_vehicule,
+        "livreur_note": livreur_note,
         "partenaire_position": partenaire_pos,
         "client_position": client_pos,
         "created_at": commande.created_at.isoformat() if commande.created_at else None,
@@ -152,346 +163,633 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 # ── HTML Templates ──────────────────────────────────────
 
 def _tracking_html(token: str, numero: str, partenaire: str) -> str:
+    import json as _json
+    partenaire_js = _json.dumps(partenaire)
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Suivi commande {numero}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0c0c0c">
+<title>Suivi de votre livraison • {partenaire}</title>
+<meta property="og:title" content="Suivi en direct de votre livraison">
+<meta property="og:description" content="Suivez votre livreur en temps réel sur la carte. Sönaiyaa.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f6f6f6; color: #0c0c0c;
-    min-height: 100vh; padding: 20px 20px 40px;
+  :root {{
+    --brand: #FF5A1F;
+    --brand-dark: #E84A12;
+    --ink: #0c0c0c;
+    --ink-soft: #4b5563;
+    --ink-muted: #9ca3af;
+    --bg: #f6f6f6;
+    --surface: #ffffff;
+    --line: rgba(0,0,0,0.06);
+    --green: #05A357;
+    --red: #E74C3C;
+    --shadow: 0 -8px 32px rgba(0,0,0,0.12);
   }}
-  .card {{
-    background: #fff; border-radius: 16px; padding: 24px 22px;
-    max-width: 460px; margin: 0 auto;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+  html, body {{
+    height: 100%; overflow: hidden;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--ink); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
   }}
-  .header {{ text-align: center; margin-bottom: 22px; }}
-  .header .icon {{ font-size: 36px; margin-bottom: 10px; }}
-  .header h1 {{ font-size: 18px; font-weight: 700; }}
-  .header .sub {{ font-size: 13px; color: #6b6b6b; margin-top: 4px; }}
-  .header .numero {{ font-size: 12px; color: #999; margin-top: 2px; font-family: monospace; }}
 
-  /* Map */
+  /* ── Map fullscreen ───────────────────────────────────── */
   #map {{
-    height: 280px; border-radius: 14px; overflow: hidden;
-    margin-bottom: 22px; background: #e5e7eb;
+    position: fixed; inset: 0;
+    z-index: 1; background: #e5e7eb;
   }}
   #mapEmpty {{
-    height: 280px; border-radius: 14px;
-    display: flex; align-items: center; justify-content: center;
-    background: #f3f4f6; color: #9ca3af; font-size: 13px;
-    margin-bottom: 22px; text-align: center; padding: 0 24px;
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 2; background: linear-gradient(135deg, #fef3eb 0%, #ffffff 100%);
+    text-align: center; padding: 0 32px;
   }}
-  .leaflet-control-attribution {{ font-size: 9px !important; }}
+  #mapEmpty .icon {{
+    font-size: 64px; margin-bottom: 18px;
+    animation: float 3s ease-in-out infinite;
+  }}
+  #mapEmpty h2 {{ font-size: 20px; font-weight: 700; margin-bottom: 8px; }}
+  #mapEmpty p {{ font-size: 14px; color: var(--ink-soft); max-width: 280px; line-height: 1.5; }}
+  @keyframes float {{
+    0%, 100% {{ transform: translateY(0); }}
+    50% {{ transform: translateY(-10px); }}
+  }}
+  .leaflet-control-attribution {{
+    font-size: 9px !important; opacity: 0.6;
+    background: rgba(255,255,255,0.8) !important;
+  }}
 
-  /* Marker custom */
-  .marker-pin {{
-    width: 36px; height: 36px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 18px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-    border: 2px solid #fff;
+  /* ── Top bar flottant ─────────────────────────────────── */
+  .topbar {{
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 100; padding: 14px 16px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.6) 70%, transparent 100%);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }}
-  .marker-livreur {{ background: #FF5A1F; animation: pulseRing 2.2s ease-out infinite; }}
-  .marker-partenaire {{ background: #111827; }}
-  .marker-client {{ background: #059669; }}
+  .brand {{
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 800; font-size: 16px; letter-spacing: -0.02em;
+  }}
+  .brand-dot {{
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 4px rgba(255,90,31,0.18);
+  }}
+  .live-badge {{
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-radius: 999px;
+    background: rgba(231,76,60,0.1); color: var(--red);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  }}
+  .live-dot {{
+    width: 7px; height: 7px; border-radius: 50%; background: var(--red);
+    animation: livePulse 1.4s ease-in-out infinite;
+  }}
+  @keyframes livePulse {{
+    0%, 100% {{ box-shadow: 0 0 0 0 rgba(231,76,60,0.6); }}
+    50% {{ box-shadow: 0 0 0 6px rgba(231,76,60,0); }}
+  }}
+
+  /* ── Markers ──────────────────────────────────────────── */
+  .marker-pin {{
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25); border: 3px solid #fff;
+    border-radius: 50%; transform: translate(-50%, -50%);
+  }}
+  .marker-livreur {{
+    width: 52px; height: 52px; font-size: 26px;
+    background: var(--brand);
+    animation: pulseRing 2.4s ease-out infinite;
+  }}
+  .marker-fixed {{
+    width: 36px; height: 36px; font-size: 16px;
+  }}
+  .marker-partenaire {{ background: #111827; color: #fff; }}
+  .marker-client {{ background: var(--green); color: #fff; }}
   @keyframes pulseRing {{
     0% {{ box-shadow: 0 0 0 0 rgba(255,90,31,0.55); }}
-    70% {{ box-shadow: 0 0 0 14px rgba(255,90,31,0); }}
+    70% {{ box-shadow: 0 0 0 22px rgba(255,90,31,0); }}
     100% {{ box-shadow: 0 0 0 0 rgba(255,90,31,0); }}
   }}
 
-  /* Stepper */
-  .stepper {{ position: relative; padding-left: 32px; }}
-  .step {{
-    position: relative; padding-bottom: 22px;
-    opacity: 0.35; transition: opacity 0.4s;
+  /* ── Bottom sheet ─────────────────────────────────────── */
+  .sheet {{
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: 50; background: var(--surface);
+    border-radius: 24px 24px 0 0;
+    box-shadow: var(--shadow);
+    padding: 14px 20px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    max-height: 75vh; overflow-y: auto;
+    transform: translateY(0);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }}
-  .step.active {{ opacity: 1; }}
-  .step.done {{ opacity: 0.7; }}
-  .step:last-child {{ padding-bottom: 0; }}
-
-  .step::before {{
-    content: ''; position: absolute; left: -25px; top: 6px;
-    width: 12px; height: 12px; border-radius: 50%;
-    background: #ddd; border: 2px solid #ddd; transition: all 0.4s;
+  .sheet-handle {{
+    width: 40px; height: 4px; border-radius: 4px;
+    background: #e5e7eb; margin: 0 auto 14px;
   }}
-  .step.active::before {{ background: #0c0c0c; border-color: #0c0c0c; box-shadow: 0 0 0 4px rgba(12,12,12,0.15); }}
-  .step.done::before {{ background: #05A357; border-color: #05A357; }}
-  .step.cancelled::before {{ background: #E74C3C; border-color: #E74C3C; }}
 
-  .step::after {{
-    content: ''; position: absolute; left: -20px; top: 22px;
-    width: 2px; height: calc(100% - 16px); background: #eee; transition: background 0.4s;
+  /* ── ETA Hero ─────────────────────────────────────────── */
+  .eta-hero {{
+    display: flex; align-items: flex-start; gap: 14px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line);
   }}
-  .step:last-child::after {{ display: none; }}
-  .step.done::after {{ background: #05A357; }}
+  .eta-icon {{
+    flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    background: linear-gradient(135deg, #fff5ee 0%, #ffe4d3 100%);
+  }}
+  .eta-content {{ flex: 1; min-width: 0; }}
+  .eta-label {{
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--brand); margin-bottom: 3px;
+  }}
+  .eta-value {{
+    font-size: 22px; font-weight: 800; letter-spacing: -0.02em;
+    line-height: 1.15;
+  }}
+  .eta-sub {{
+    font-size: 13px; color: var(--ink-soft); margin-top: 2px;
+  }}
 
-  .step-title {{ font-size: 14px; font-weight: 600; margin-bottom: 2px; }}
-  .step-desc {{ font-size: 12px; color: #6b6b6b; }}
-  .step-time {{ font-size: 11px; color: #999; margin-top: 2px; }}
+  /* ── Stepper compact ──────────────────────────────────── */
+  .stepper {{
+    display: flex; align-items: center; gap: 6px;
+    padding: 14px 0; border-bottom: 1px solid var(--line);
+  }}
+  .pip {{
+    flex: 1; height: 4px; border-radius: 4px;
+    background: #e9eaec; transition: background 0.6s;
+  }}
+  .pip.done {{ background: var(--green); }}
+  .pip.active {{
+    background: linear-gradient(90deg, var(--green) 0%, var(--brand) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }}
+  .pip.cancelled {{ background: var(--red); }}
+  @keyframes shimmer {{
+    0% {{ background-position: 200% 0; }}
+    100% {{ background-position: -200% 0; }}
+  }}
+  .step-label {{
+    margin-top: 8px; font-size: 13px; font-weight: 600;
+    color: var(--ink-soft); text-align: center;
+  }}
+  .step-label .icon {{ margin-right: 6px; }}
 
-  /* Livreur card */
+  /* ── Livreur card ─────────────────────────────────────── */
   .livreur-card {{
-    margin-top: 20px; padding: 14px; border-radius: 12px;
-    background: #f0faf4; border: 1px solid #d0eedd;
-    display: none;
+    display: none; align-items: center; gap: 14px;
+    padding: 16px 0; border-bottom: 1px solid var(--line);
   }}
-  .livreur-card.show {{ display: block; }}
-  .livreur-card .name {{ font-size: 14px; font-weight: 600; }}
-  .livreur-card .phone {{
-    display: inline-block; margin-top: 8px; padding: 8px 16px;
-    background: #05A357; color: #fff; border-radius: 8px;
-    text-decoration: none; font-size: 14px; font-weight: 600;
+  .livreur-card.show {{ display: flex; }}
+  .livreur-avatar {{
+    flex-shrink: 0; width: 56px; height: 56px; border-radius: 50%;
+    background: linear-gradient(135deg, #fff5ee 0%, #ffe4d3 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; overflow: hidden;
+    border: 2px solid var(--brand);
   }}
+  .livreur-avatar img {{ width: 100%; height: 100%; object-fit: cover; }}
+  .livreur-info {{ flex: 1; min-width: 0; }}
+  .livreur-name {{
+    font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+  }}
+  .livreur-meta {{
+    font-size: 12px; color: var(--ink-soft); margin-top: 2px;
+    display: flex; align-items: center; gap: 6px;
+  }}
+  .livreur-meta .dot {{
+    width: 3px; height: 3px; border-radius: 50%; background: var(--ink-muted);
+  }}
+  .call-btn {{
+    flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+    padding: 10px 16px; border-radius: 999px;
+    background: var(--green); color: #fff;
+    text-decoration: none; font-size: 13px; font-weight: 700;
+    box-shadow: 0 4px 14px rgba(5,163,87,0.3);
+    transition: transform 0.15s;
+  }}
+  .call-btn:active {{ transform: scale(0.96); }}
 
-  /* Status banner */
-  .banner {{
-    text-align: center; margin-top: 18px; padding: 12px;
-    border-radius: 10px; font-size: 13px; font-weight: 600;
-    display: none;
+  /* ── Order info ───────────────────────────────────────── */
+  .order-info {{
+    padding-top: 14px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--ink-muted);
   }}
-  .banner.cancelled {{ display: block; background: #f8d7da; color: #721c24; }}
+  .order-num {{ font-family: ui-monospace, 'SF Mono', Menlo, monospace; }}
 
-  .pulse {{ animation: pulse 2s ease-in-out infinite; }}
-  @keyframes pulse {{
-    0%, 100% {{ opacity: 1; }}
-    50% {{ opacity: 0.5; }}
+  /* ── Banner annulé / livré ─────────────────────────────── */
+  .final-banner {{
+    display: none; padding: 18px 16px; border-radius: 14px;
+    text-align: center; font-weight: 700;
+    margin-bottom: 14px;
   }}
-  .refresh-info {{
-    text-align: center; margin-top: 14px;
-    font-size: 11px; color: #bbb;
+  .final-banner.cancelled {{
+    display: block;
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    color: #991b1b; border: 1px solid #fecaca;
+  }}
+  .final-banner.delivered {{
+    display: block;
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    color: #065f46; border: 1px solid #a7f3d0;
+  }}
+  .final-banner .big {{
+    font-size: 28px; margin-bottom: 6px;
+  }}
+  .final-banner .label {{ font-size: 16px; }}
+  .final-banner .sub {{ font-size: 12px; font-weight: 500; opacity: 0.8; margin-top: 4px; }}
+
+  /* ── Loading initial ──────────────────────────────────── */
+  .loading-overlay {{
+    position: fixed; inset: 0; z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    transition: opacity 0.4s, visibility 0.4s;
+  }}
+  .loading-overlay.hidden {{ opacity: 0; visibility: hidden; }}
+  .spinner {{
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 3px solid #f3f4f6; border-top-color: var(--brand);
+    animation: spin 0.8s linear infinite;
+  }}
+  @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+
+  /* Responsive */
+  @media (min-width: 720px) {{
+    .sheet {{
+      max-width: 480px; left: 50%; transform: translateX(-50%);
+      border-radius: 24px;
+      bottom: 24px; max-height: calc(100vh - 100px);
+    }}
+    .topbar {{ padding-left: 24px; padding-right: 24px; }}
   }}
 </style>
 </head>
 <body>
 
-<div class="card">
-  <div class="header">
-    <div class="icon">🛵</div>
-    <h1>{partenaire}</h1>
-    <div class="sub">Suivi de votre livraison</div>
-    <div class="numero">{numero}</div>
+<!-- Loading initial -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+</div>
+
+<!-- Carte plein écran -->
+<div id="map"></div>
+
+<!-- Placeholder quand on n'a pas encore de position -->
+<div id="mapEmpty" style="display:none;">
+  <div class="icon">📍</div>
+  <h2>En attente d'un livreur</h2>
+  <p>La position s'affichera ici dès qu'un livreur acceptera votre commande.</p>
+</div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    Sönaiyaa
+  </div>
+  <div class="live-badge">
+    <span class="live-dot"></span>
+    En direct
+  </div>
+</div>
+
+<!-- Bottom sheet -->
+<div class="sheet">
+  <div class="sheet-handle"></div>
+
+  <!-- Bannière finale (livré ou annulé) -->
+  <div class="final-banner" id="finalBanner"></div>
+
+  <!-- ETA Hero -->
+  <div class="eta-hero" id="etaHero">
+    <div class="eta-icon" id="etaIcon">🛵</div>
+    <div class="eta-content">
+      <div class="eta-label" id="etaLabel">Préparation</div>
+      <div class="eta-value" id="etaValue">Votre livreur arrive bientôt</div>
+      <div class="eta-sub" id="etaSub">Commande chez {partenaire}</div>
+    </div>
   </div>
 
-  <div id="map"></div>
-  <div id="mapEmpty" style="display:none;">📍 La position du livreur s'affichera ici dès qu'un livreur acceptera la course.</div>
-
-  <div class="stepper">
-    <div class="step" id="step-creee">
-      <div class="step-title">Commande reçue</div>
-      <div class="step-desc">Le partenaire prépare votre commande</div>
-      <div class="step-time" id="time-creee"></div>
+  <!-- Stepper compact -->
+  <div>
+    <div class="stepper">
+      <div class="pip" id="pip-0"></div>
+      <div class="pip" id="pip-1"></div>
+      <div class="pip" id="pip-2"></div>
+      <div class="pip" id="pip-3"></div>
     </div>
-    <div class="step" id="step-acceptee">
-      <div class="step-title">Livreur assigné</div>
-      <div class="step-desc">Un livreur se dirige vers le partenaire</div>
-      <div class="step-time" id="time-acceptee"></div>
-    </div>
-    <div class="step" id="step-recuperee">
-      <div class="step-title">Commande récupérée</div>
-      <div class="step-desc">Le livreur a récupéré votre commande</div>
-      <div class="step-time" id="time-recuperee"></div>
-    </div>
-    <div class="step" id="step-livraison">
-      <div class="step-title">En route vers vous</div>
-      <div class="step-desc">Le livreur est en chemin !</div>
-    </div>
-    <div class="step" id="step-terminee">
-      <div class="step-title">Livrée !</div>
-      <div class="step-desc">Bon appétit !</div>
-      <div class="step-time" id="time-livree"></div>
+    <div class="step-label" id="stepLabel">
+      <span class="icon">📋</span>
+      <span id="stepLabelText">Commande reçue</span>
     </div>
   </div>
 
+  <!-- Livreur card -->
   <div class="livreur-card" id="livreurCard">
-    <div class="name" id="livreurNom"></div>
-    <a class="phone" id="livreurTel" href="#">📞 Appeler le livreur</a>
+    <div class="livreur-avatar" id="livreurAvatar">🛵</div>
+    <div class="livreur-info">
+      <div class="livreur-name" id="livreurNom"></div>
+      <div class="livreur-meta" id="livreurMeta"></div>
+    </div>
+    <a class="call-btn" id="livreurTel" href="#">
+      <span>📞</span> Appeler
+    </a>
   </div>
 
-  <div class="banner cancelled" id="bannerCancelled">❌ Cette commande a été annulée</div>
-
-  <div class="refresh-info pulse" id="refreshInfo">Mise à jour automatique…</div>
+  <!-- Order info -->
+  <div class="order-info">
+    <span>Commande</span>
+    <span class="order-num">{numero}</span>
+  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 <script>
 const TOKEN = '{token}';
+const POLL_INTERVAL = 4000;
+const MOTO_KMH = 25; // vitesse moyenne en ville
 
-const STEP_MAP = {{
-  'CREEE': 'step-creee', 'DIFFUSEE': 'step-creee',
-  'ACCEPTEE': 'step-acceptee',
-  'EN_RECUPERATION': 'step-recuperee',
-  'EN_LIVRAISON': 'step-livraison',
-  'TERMINEE': 'step-terminee'
-}};
-
+// État
 let map = null;
 let livreurMarker = null;
 let partenaireMarker = null;
 let clientMarker = null;
-let mapInitialized = false;
+let routeLine = null;
+let mapReady = false;
+let livreurTargetPos = null;   // dernière position reçue
+let livreurDisplayPos = null;  // position interpolée affichée
+let animationFrameId = null;
 
-function makeIcon(cls, emoji) {{
+const STATUS_CONFIG = {{
+  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Commande reçue',           desc: 'Le partenaire prépare votre commande' }},
+  DIFFUSEE:        {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'À la recherche d\\'un livreur', desc: 'Nous cherchons le livreur le plus proche' }},
+  ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers le partenaire' }},
+  EN_RECUPERATION: {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur sur place',        desc: 'Récupération en cours' }},
+  EN_LIVRAISON:    {{ pip: 2, icon: '🚀', label: 'En chemin',        title: 'En route vers vous',       desc: 'Le livreur arrive !' }},
+  TERMINEE:        {{ pip: 3, icon: '🎉', label: 'Livré',            title: 'Livraison terminée',       desc: '' }},
+}};
+
+const VEHICULE_EMOJI = {{
+  moto: '🛵', scooter: '🛵', velo: '🚲', voiture: '🚗', tricycle: '🛺',
+}};
+
+// ── Helpers géo ──
+function haversineKm(a, b) {{
+  const R = 6371;
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude), lat2 = toRad(b.latitude);
+  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}}
+function formatDistance(km) {{
+  if (km < 1) return Math.round(km * 1000) + ' m';
+  return km.toFixed(1) + ' km';
+}}
+function formatEta(km) {{
+  const min = Math.max(1, Math.round(km / MOTO_KMH * 60));
+  if (min < 60) return min + ' min';
+  const h = Math.floor(min / 60);
+  return h + 'h' + (min % 60).toString().padStart(2, '0');
+}}
+
+// ── Map ──
+function makeIcon(cls, content, size = 36) {{
   return L.divIcon({{
     className: '',
-    html: '<div class="marker-pin ' + cls + '">' + emoji + '</div>',
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
+    html: '<div class="marker-pin ' + cls + '">' + content + '</div>',
+    iconSize: [0, 0], // on positionne via CSS
   }});
 }}
 
 function ensureMap() {{
-  if (mapInitialized) return;
-  mapInitialized = true;
+  if (mapReady) return;
+  mapReady = true;
   document.getElementById('mapEmpty').style.display = 'none';
-  document.getElementById('map').style.display = 'block';
   map = L.map('map', {{
-    zoomControl: false,
-    attributionControl: true,
-    scrollWheelZoom: false,
-  }}).setView([9.535, -13.677], 13); // Conakry par défaut
+    zoomControl: false, attributionControl: true, scrollWheelZoom: false, tapTolerance: 30,
+  }}).setView([9.535, -13.677], 13);
+  L.control.zoom({{ position: 'topright' }}).addTo(map);
   L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-    maxZoom: 19,
-    attribution: '© OpenStreetMap',
+    maxZoom: 19, attribution: '© OpenStreetMap',
   }}).addTo(map);
 }}
 
-function updateMap(data) {{
+function smoothMoveLivreur() {{
+  if (!livreurMarker || !livreurTargetPos || !livreurDisplayPos) return;
+  const lerp = 0.18; // facteur d'interpolation par frame
+  const dLat = livreurTargetPos.latitude - livreurDisplayPos.latitude;
+  const dLng = livreurTargetPos.longitude - livreurDisplayPos.longitude;
+  if (Math.abs(dLat) < 1e-7 && Math.abs(dLng) < 1e-7) {{
+    livreurDisplayPos = {{ ...livreurTargetPos }};
+  }} else {{
+    livreurDisplayPos = {{
+      latitude: livreurDisplayPos.latitude + dLat * lerp,
+      longitude: livreurDisplayPos.longitude + dLng * lerp,
+    }};
+  }}
+  livreurMarker.setLatLng([livreurDisplayPos.latitude, livreurDisplayPos.longitude]);
+  animationFrameId = requestAnimationFrame(smoothMoveLivreur);
+}}
+
+function updateMap(data, vehiculeEmoji) {{
   const liv = data.livreur_position;
   const part = data.partenaire_position;
   const cli = data.client_position;
 
-  // Si on n'a aucune position du tout → on garde le placeholder
   if (!liv && !part && !cli) {{
-    document.getElementById('map').style.display = 'none';
     document.getElementById('mapEmpty').style.display = 'flex';
     return;
   }}
 
   ensureMap();
 
-  // Partenaire (départ) — fixe
   if (part && !partenaireMarker) {{
     partenaireMarker = L.marker([part.latitude, part.longitude], {{
-      icon: makeIcon('marker-partenaire', '🏪'),
-      title: 'Partenaire',
+      icon: makeIcon('marker-fixed marker-partenaire', '🏪'),
     }}).addTo(map);
   }}
 
-  // Client (arrivée) — fixe quand connue
   if (cli && !clientMarker) {{
     clientMarker = L.marker([cli.latitude, cli.longitude], {{
-      icon: makeIcon('marker-client', '🏠'),
-      title: 'Vous',
+      icon: makeIcon('marker-fixed marker-client', '🏠'),
     }}).addTo(map);
   }}
 
-  // Livreur — animé
   if (liv) {{
-    const latlng = [liv.latitude, liv.longitude];
+    livreurTargetPos = liv;
     if (!livreurMarker) {{
-      livreurMarker = L.marker(latlng, {{
-        icon: makeIcon('marker-livreur', '🛵'),
-        title: 'Livreur',
+      livreurDisplayPos = {{ ...liv }};
+      livreurMarker = L.marker([liv.latitude, liv.longitude], {{
+        icon: makeIcon('marker-livreur', vehiculeEmoji || '🛵'),
+        zIndexOffset: 1000,
+      }}).addTo(map);
+    }}
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    animationFrameId = requestAnimationFrame(smoothMoveLivreur);
+  }}
+
+  // Ligne reliant le livreur à sa destination courante (partenaire ou client)
+  const dest = (data.status === 'EN_LIVRAISON' || data.status === 'TERMINEE') ? cli : part;
+  if (liv && dest) {{
+    const coords = [[liv.latitude, liv.longitude], [dest.latitude, dest.longitude]];
+    if (!routeLine) {{
+      routeLine = L.polyline(coords, {{
+        color: '#FF5A1F', weight: 4, opacity: 0.6, dashArray: '8 10', lineCap: 'round',
       }}).addTo(map);
     }} else {{
-      livreurMarker.setLatLng(latlng);
+      routeLine.setLatLngs(coords);
     }}
   }}
 
-  // Auto-fit bounds sur les markers actifs
+  // Auto-fit
   const points = [];
   if (liv) points.push([liv.latitude, liv.longitude]);
-  if (part) points.push([part.latitude, part.longitude]);
-  if (cli) points.push([cli.latitude, cli.longitude]);
+  if (dest) points.push([dest.latitude, dest.longitude]);
   if (points.length === 1) {{
     map.setView(points[0], 15);
   }} else if (points.length > 1) {{
-    map.fitBounds(points, {{ padding: [40, 40], maxZoom: 16 }});
+    map.fitBounds(points, {{ padding: [80, 80], maxZoom: 16 }});
   }}
 }}
 
-function fmtTime(iso) {{
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('fr-FR', {{ hour: '2-digit', minute: '2-digit' }});
+// ── ETA & UI ──
+function computeEta(data) {{
+  const liv = data.livreur_position;
+  const dest = (data.status === 'EN_LIVRAISON') ? data.client_position : data.partenaire_position;
+  if (!liv || !dest) return null;
+  const km = haversineKm(liv, dest);
+  return {{ km, eta: formatEta(km), distance: formatDistance(km) }};
+}}
+
+function updateEtaHero(data, vehiculeEmoji) {{
+  const cfg = STATUS_CONFIG[data.status];
+  if (!cfg) return;
+
+  document.getElementById('etaIcon').textContent = vehiculeEmoji || cfg.icon;
+  document.getElementById('etaLabel').textContent = cfg.label;
+
+  if (data.status === 'EN_LIVRAISON' || data.status === 'ACCEPTEE' || data.status === 'EN_RECUPERATION') {{
+    const e = computeEta(data);
+    if (e) {{
+      const dest = (data.status === 'EN_LIVRAISON') ? 'chez vous' : 'chez le partenaire';
+      document.getElementById('etaValue').textContent = 'Arrivée dans ~' + e.eta;
+      document.getElementById('etaSub').textContent = 'Le livreur est à ' + e.distance + ' — ' + dest;
+      return;
+    }}
+  }}
+  document.getElementById('etaValue').textContent = cfg.title;
+  document.getElementById('etaSub').textContent = cfg.desc || ('Commande chez ' + {partenaire_js});
+}}
+
+function updateStepper(data) {{
+  const cfg = STATUS_CONFIG[data.status];
+  const idx = cfg ? cfg.pip : 0;
+  for (let i = 0; i < 4; i++) {{
+    const el = document.getElementById('pip-' + i);
+    el.className = 'pip';
+    if (data.status === 'ANNULEE') {{ if (i === 0) el.classList.add('cancelled'); }}
+    else if (i < idx) el.classList.add('done');
+    else if (i === idx) el.classList.add(data.status === 'TERMINEE' ? 'done' : 'active');
+  }}
+  if (cfg) {{
+    document.querySelector('.step-label .icon').textContent = cfg.icon;
+    document.getElementById('stepLabelText').textContent = cfg.title;
+  }}
+}}
+
+function updateLivreurCard(data, vehiculeEmoji) {{
+  const card = document.getElementById('livreurCard');
+  if (!data.livreur_nom) {{ card.classList.remove('show'); return; }}
+  card.classList.add('show');
+
+  const avatar = document.getElementById('livreurAvatar');
+  if (data.livreur_photo) {{
+    avatar.innerHTML = '<img src="' + data.livreur_photo + '" alt="">';
+  }} else {{
+    avatar.textContent = vehiculeEmoji || '🛵';
+  }}
+
+  document.getElementById('livreurNom').textContent = data.livreur_nom;
+
+  const meta = document.getElementById('livreurMeta');
+  const parts = [];
+  if (data.livreur_vehicule) parts.push(data.livreur_vehicule.charAt(0).toUpperCase() + data.livreur_vehicule.slice(1));
+  if (data.livreur_note && data.livreur_note > 0) parts.push('★ ' + data.livreur_note.toFixed(1));
+  meta.innerHTML = parts.join('<span class="dot"></span>');
+
+  const tel = document.getElementById('livreurTel');
+  if (data.livreur_telephone) {{
+    tel.href = 'tel:' + data.livreur_telephone;
+    tel.style.display = 'flex';
+  }} else {{
+    tel.style.display = 'none';
+  }}
+}}
+
+function updateFinalBanner(data) {{
+  const b = document.getElementById('finalBanner');
+  if (data.status === 'ANNULEE') {{
+    b.className = 'final-banner cancelled';
+    b.innerHTML = '<div class="big">❌</div><div class="label">Commande annulée</div><div class="sub">Contactez le partenaire pour plus d\\'informations</div>';
+    document.getElementById('etaHero').style.display = 'none';
+  }} else if (data.status === 'TERMINEE') {{
+    b.className = 'final-banner delivered';
+    b.innerHTML = '<div class="big">🎉</div><div class="label">Livré avec succès</div><div class="sub">Merci d\\'avoir utilisé Sönaiyaa</div>';
+    document.getElementById('etaHero').style.display = 'none';
+  }} else {{
+    b.className = 'final-banner';
+    document.getElementById('etaHero').style.display = 'flex';
+  }}
 }}
 
 function updateUI(data) {{
-  const s = data.status;
-  const stepIds = ['step-creee','step-acceptee','step-recuperee','step-livraison','step-terminee'];
-  const currentStepId = STEP_MAP[s];
-
-  if (s === 'ANNULEE') {{
-    stepIds.forEach(id => {{ document.getElementById(id).className = 'step'; }});
-    document.getElementById('step-creee').className = 'step cancelled';
-    document.getElementById('bannerCancelled').style.display = 'block';
-    document.getElementById('refreshInfo').style.display = 'none';
-    return;
-  }}
-
-  let pastCurrent = false;
-  for (const id of stepIds) {{
-    const el = document.getElementById(id);
-    if (id === currentStepId) {{
-      el.className = 'step active';
-      pastCurrent = true;
-    }} else if (!pastCurrent) {{
-      el.className = 'step done';
-    }} else {{
-      el.className = 'step';
-    }}
-  }}
-
-  if (data.created_at) document.getElementById('time-creee').textContent = fmtTime(data.created_at);
-  if (data.acceptee_at) document.getElementById('time-acceptee').textContent = fmtTime(data.acceptee_at);
-  if (data.recuperee_at) document.getElementById('time-recuperee').textContent = fmtTime(data.recuperee_at);
-  if (data.livree_at) document.getElementById('time-livree').textContent = fmtTime(data.livree_at);
-
-  const lc = document.getElementById('livreurCard');
-  if (data.livreur_nom) {{
-    lc.className = 'livreur-card show';
-    document.getElementById('livreurNom').textContent = '🏍️ ' + data.livreur_nom;
-    if (data.livreur_telephone) {{
-      const tel = document.getElementById('livreurTel');
-      tel.href = 'tel:' + data.livreur_telephone;
-      tel.style.display = 'inline-block';
-    }}
-  }} else {{
-    lc.className = 'livreur-card';
-  }}
-
-  document.getElementById('bannerCancelled').style.display = s === 'ANNULEE' ? 'block' : 'none';
-
-  if (s === 'TERMINEE' || s === 'ANNULEE') {{
-    document.getElementById('refreshInfo').style.display = 'none';
-  }}
-
-  updateMap(data);
+  const vehiculeEmoji = data.livreur_vehicule ? (VEHICULE_EMOJI[data.livreur_vehicule.toLowerCase()] || '🛵') : '🛵';
+  updateEtaHero(data, vehiculeEmoji);
+  updateStepper(data);
+  updateLivreurCard(data, vehiculeEmoji);
+  updateFinalBanner(data);
+  updateMap(data, vehiculeEmoji);
 }}
 
+// ── Polling ──
+let firstLoad = true;
 function poll() {{
   fetch('/suivi/' + TOKEN + '/status')
     .then(r => r.json())
     .then(data => {{
       updateUI(data);
+      if (firstLoad) {{
+        firstLoad = false;
+        document.getElementById('loadingOverlay').classList.add('hidden');
+      }}
       if (data.status !== 'TERMINEE' && data.status !== 'ANNULEE') {{
-        setTimeout(poll, 5000);
+        setTimeout(poll, POLL_INTERVAL);
       }}
     }})
-    .catch(() => setTimeout(poll, 10000));
+    .catch(() => setTimeout(poll, 8000));
 }}
 
-// État initial : on cache la map tant qu'on n'a pas reçu de position
-document.getElementById('map').style.display = 'none';
 document.getElementById('mapEmpty').style.display = 'flex';
 poll();
 </script>
