@@ -228,19 +228,54 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     background: rgba(255,255,255,0.8) !important;
   }}
 
-  /* ── Top bar flottant ─────────────────────────────────── */
+  /* Contrôles de zoom : repositionnés sous le topbar et stylés premium */
+  .leaflet-top.leaflet-right {{
+    top: calc(72px + env(safe-area-inset-top, 0px)) !important;
+    right: 14px !important;
+  }}
+  .leaflet-control-zoom {{
+    border: none !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12) !important;
+  }}
+  .leaflet-control-zoom a {{
+    background: rgba(255,255,255,0.95) !important;
+    color: var(--ink) !important;
+    width: 38px !important;
+    height: 38px !important;
+    line-height: 38px !important;
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }}
+  .leaflet-control-zoom a + a {{
+    border-top: 1px solid rgba(0,0,0,0.06) !important;
+  }}
+  .leaflet-bar a:hover {{
+    background: rgba(255,255,255,1) !important;
+  }}
+
+  /* ── Top bar flottant : pilules transparentes, ne masque plus la carte ── */
   .topbar {{
     position: fixed; top: 0; left: 0; right: 0;
     z-index: 100; padding: 14px 16px;
     padding-top: max(14px, env(safe-area-inset-top));
     display: flex; justify-content: space-between; align-items: center;
-    background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.6) 70%, transparent 100%);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+    background: transparent;
   }}
+  .topbar > * {{ pointer-events: auto; }}
   .brand {{
     display: flex; align-items: center; gap: 8px;
-    font-weight: 800; font-size: 16px; letter-spacing: -0.02em;
+    font-weight: 800; font-size: 15px; letter-spacing: -0.02em;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    padding: 9px 14px; border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.1);
   }}
   .brand-dot {{
     width: 10px; height: 10px; border-radius: 50%;
@@ -249,8 +284,12 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
   }}
   .live-badge {{
     display: flex; align-items: center; gap: 6px;
-    padding: 6px 10px; border-radius: 999px;
-    background: rgba(231,76,60,0.1); color: var(--red);
+    padding: 9px 12px; border-radius: 999px;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+    color: var(--red);
     font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   }}
   .live-dot {{
