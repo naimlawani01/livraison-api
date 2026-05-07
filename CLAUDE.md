@@ -12,7 +12,7 @@ This directory contains the main API for the Sonaiyaa project.
 - **Payments**: GeniusPay (Mobile Money checkout + driver payouts)
 - **SMS**: PasseInfo (OTP authentication — provider local Guinée)
 - **Push Notifications**: Firebase FCM (`firebase-admin`)
-- **Deployment**: Runs via Docker locally (`docker-compose`), but is **hosted on Railway** for production.
+- **Deployment**: Runs via Docker locally (`docker-compose`), but is **hosted on Railway** for production. Reachable at `https://ample-mindfulness-production.up.railway.app`, `https://api.sonaiyaa.fr`, and `https://api.sonaiyaa.com` (all three route to the same instance).
 
 ## Common Commands
 - **Start dev server**: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
@@ -24,7 +24,8 @@ This directory contains the main API for the Sonaiyaa project.
 - `SECRET_KEY` — JWT signing secret
 - `DATABASE_URL` — PostgreSQL connection string
 - `REDIS_URL` — Redis connection string
-- `PUBLIC_BASE_URL` — Full backend URL used in SMS/link generation (production: `https://ample-mindfulness-production.up.railway.app`)
+- `PUBLIC_BASE_URL` — Full backend URL used in SMS/link generation (production: `https://api.sonaiyaa.fr`)
+- `CORS_ORIGINS` — Comma-separated list of allowed origins. Must include the live frontend domains (`https://sonaiyaa.fr`, `https://sonaiyaa.com`, and the future admin-web origin).
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` (`sonaiyaa-documents`), `R2_PUBLIC_URL` — Cloudflare R2
 - `GENIUSPAY_API_KEY`, `GENIUSPAY_API_SECRET`, `GENIUSPAY_WEBHOOK_SECRET`, `GENIUSPAY_BASE_URL`, `GENIUSPAY_WALLET_ID` — Payment gateway
 - `PASSEINFO_API_KEY`, `PASSEINFO_CLIENT_ID`, `PASSEINFO_SENDER_NAME` — PasseInfo SMS OTP
