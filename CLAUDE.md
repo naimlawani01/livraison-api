@@ -56,4 +56,7 @@ This directory contains the main API for the Sonaiyaa project.
 - `POST /api/v1/payments/webhooks/geniuspay` — GeniusPay webhook receiver
 - `GET /api/v1/admin/stats` — Platform stats (users, drivers, orders, revenue, completion rate)
 - `GET /api/v1/admin/livreurs/en-attente` — Drivers pending verification
+- `POST /api/v1/admin/test-accounts` — Create pre-verified Partenaire/Livreur test accounts (used for Apple/Play store reviewers and internal QA). Phones must start with `+224600` (unallocated GN prefix). Auto-marks the user/profile as `is_verified=true` so the reviewer can sign in immediately.
+- `GET /api/v1/admin/test-accounts` — List all test accounts (filtered by `+224600` prefix)
+- `DELETE /api/v1/admin/test-accounts/{user_id}` — Remove a test account (refuses non-test phones for safety)
 - `GET /health` — Health check endpoint (used by Docker & Railway)

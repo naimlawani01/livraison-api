@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from typing import List
+from sqlalchemy import select, func, or_
+from typing import List, Literal, Optional
 from datetime import datetime, timezone
+from pydantic import BaseModel, Field, field_validator
 from ....core.database import get_db
-from ....models.user import User
-from ....models.partenaire import Partenaire
+from ....core.security import get_password_hash
+from ....models.user import User, UserRole
+from ....models.partenaire import Partenaire, TypePartenaire
 from ....models.livreur import Livreur
 from ....models.commande import Commande, CommandeStatus
 from ....models.wallet_transaction import WalletTransaction
@@ -13,6 +15,191 @@ from ....utils.dependencies import get_current_admin
 from ....services.notification_service import notification_service
 
 router = APIRouter()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test accounts (Apple App Review, internal QA)
+# Phones MUST start with `+224600` (an unallocated GN prefix) so a leaked
+# credential can't be used to impersonate a real user.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TEST_ACCOUNT_PREFIX = "+224600"
+
+
+class TestAccountCreate(BaseModel):
+    phone: str = Field(..., description="Doit commencer par +224600")
+    password: str = Field(..., min_length=6)
+    role: Literal["PARTENAIRE", "LIVREUR"]
+    nom: str = Field(..., min_length=1)
+    # Partenaire-only (defaults are fine for the Apple reviewer flow)
+    type_partenaire: Optional[str] = "RESTAURANT"
+    adresse: Optional[str] = "Conakry, Guinée"
+    latitude: Optional[float] = 9.6412
+    longitude: Optional[float] = -13.5784
+    # Livreur-only
+    type_vehicule: Optional[str] = "moto"
+    solde_initial: Optional[float] = 0.0
+
+    @field_validator("phone")
+    @classmethod
+    def must_be_test_prefix(cls, v: str) -> str:
+        normalized = v.replace(" ", "")
+        if not normalized.startswith(TEST_ACCOUNT_PREFIX):
+            raise ValueError(
+                f"Le numéro de test doit commencer par {TEST_ACCOUNT_PREFIX} "
+                "(préfixe Guinée non alloué, sécurise contre l'usurpation)."
+            )
+        return normalized
+
+
+@router.post("/test-accounts", status_code=status.HTTP_201_CREATED)
+async def create_test_account(
+    payload: TestAccountCreate,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Crée un compte test (Partenaire ou Livreur) avec mot de passe et
+    is_verified=True d'office. Utilisé pour les credentials Apple Reviewer
+    et les tests internes."""
+    existing = await db.execute(select(User).where(User.phone == payload.phone))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Un utilisateur existe déjà avec le numéro {payload.phone}",
+        )
+
+    user = User(
+        phone=payload.phone,
+        password_hash=get_password_hash(payload.password),
+        role=UserRole(payload.role),
+        is_active=True,
+        is_verified=True,
+        last_login=None,
+    )
+    db.add(user)
+    await db.flush()
+
+    if payload.role == "PARTENAIRE":
+        try:
+            type_p = TypePartenaire(payload.type_partenaire or "AUTRE")
+        except ValueError:
+            type_p = TypePartenaire.AUTRE
+        partenaire = Partenaire(
+            user_id=user.id,
+            type_partenaire=type_p,
+            nom=payload.nom,
+            adresse=payload.adresse or "Conakry, Guinée",
+            latitude=payload.latitude or 9.6412,
+            longitude=payload.longitude or -13.5784,
+            is_verified=True,
+            is_open=True,
+            consent_accepted_at=datetime.now(timezone.utc),
+            consent_version="apple-test-1",
+        )
+        db.add(partenaire)
+    else:  # LIVREUR
+        livreur = Livreur(
+            user_id=user.id,
+            nom_complet=payload.nom,
+            type_vehicule=payload.type_vehicule or "moto",
+            is_verified=True,
+            verified_at=datetime.now(timezone.utc),
+            solde_disponible=payload.solde_initial or 0.0,
+            total_gains=payload.solde_initial or 0.0,
+            consent_accepted_at=datetime.now(timezone.utc),
+            consent_version="apple-test-1",
+        )
+        db.add(livreur)
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "message": "Compte test créé avec succès",
+        "user_id": str(user.id),
+        "phone": user.phone,
+        "role": user.role,
+        "credentials_for_apple_review": {
+            "username": user.phone,
+            "password": payload.password,
+            "notes": (
+                "Sönaiyaa uses phone + password authentication. "
+                "Use the credentials above to sign in."
+            ),
+        },
+    }
+
+
+@router.get("/test-accounts")
+async def list_test_accounts(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liste tous les comptes test (numéros commençant par +224600)."""
+    query = (
+        select(User)
+        .where(User.phone.like(f"{TEST_ACCOUNT_PREFIX}%"))
+        .order_by(User.created_at.desc())
+    )
+    result = await db.execute(query)
+    users = result.scalars().all()
+
+    accounts = []
+    for u in users:
+        nom = "(inconnu)"
+        if u.role == UserRole.PARTENAIRE:
+            pq = await db.execute(select(Partenaire).where(Partenaire.user_id == u.id))
+            p = pq.scalar_one_or_none()
+            if p:
+                nom = p.nom
+        elif u.role == UserRole.LIVREUR:
+            lq = await db.execute(select(Livreur).where(Livreur.user_id == u.id))
+            l = lq.scalar_one_or_none()
+            if l:
+                nom = l.nom_complet
+        accounts.append({
+            "user_id": str(u.id),
+            "phone": u.phone,
+            "role": u.role.value if isinstance(u.role, UserRole) else str(u.role),
+            "nom": nom,
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+    return accounts
+
+
+@router.delete("/test-accounts/{user_id}")
+async def delete_test_account(
+    user_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Supprime un compte test. Refuse si le numéro n'est pas un préfixe test."""
+    query = select(User).where(User.id == user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Compte non trouvé")
+    if not user.phone.startswith(TEST_ACCOUNT_PREFIX):
+        raise HTTPException(
+            status_code=400,
+            detail="Cet endpoint ne peut supprimer que les comptes test "
+                   f"(préfixe {TEST_ACCOUNT_PREFIX}).",
+        )
+
+    if user.role == UserRole.LIVREUR:
+        lq = await db.execute(select(Livreur).where(Livreur.user_id == user.id))
+        livreur = lq.scalar_one_or_none()
+        if livreur:
+            await db.delete(livreur)
+    elif user.role == UserRole.PARTENAIRE:
+        pq = await db.execute(select(Partenaire).where(Partenaire.user_id == user.id))
+        partenaire = pq.scalar_one_or_none()
+        if partenaire:
+            await db.delete(partenaire)
+
+    await db.delete(user)
+    await db.commit()
+    return {"message": "Compte test supprimé"}
 
 
 @router.get("/stats")
