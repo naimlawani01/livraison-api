@@ -98,7 +98,7 @@ async def create_test_account(
             is_verified=True,
             is_open=True,
             consent_accepted_at=consent_naive,
-            consent_version="apple-test-1",
+            consent_version="apple-v1",
         )
         db.add(partenaire)
     else:  # LIVREUR
@@ -111,7 +111,7 @@ async def create_test_account(
             solde_disponible=payload.solde_initial or 0.0,
             total_gains=payload.solde_initial or 0.0,
             consent_accepted_at=consent_naive,
-            consent_version="apple-test-1",
+            consent_version="apple-v1",
         )
         db.add(livreur)
 
