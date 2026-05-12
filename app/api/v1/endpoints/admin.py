@@ -78,6 +78,11 @@ async def create_test_account(
     db.add(user)
     await db.flush()
 
+    # `consent_accepted_at` is a naive `DateTime` column (no timezone) in
+    # both Partenaire and Livreur models — strip tzinfo to avoid asyncpg
+    # rejecting the mix of offset-aware datetime with offset-naive column.
+    consent_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
     if payload.role == "PARTENAIRE":
         try:
             type_p = TypePartenaire(payload.type_partenaire or "AUTRE")
@@ -92,7 +97,7 @@ async def create_test_account(
             longitude=payload.longitude or -13.5784,
             is_verified=True,
             is_open=True,
-            consent_accepted_at=datetime.now(timezone.utc),
+            consent_accepted_at=consent_naive,
             consent_version="apple-test-1",
         )
         db.add(partenaire)
@@ -105,7 +110,7 @@ async def create_test_account(
             verified_at=datetime.now(timezone.utc),
             solde_disponible=payload.solde_initial or 0.0,
             total_gains=payload.solde_initial or 0.0,
-            consent_accepted_at=datetime.now(timezone.utc),
+            consent_accepted_at=consent_naive,
             consent_version="apple-test-1",
         )
         db.add(livreur)
