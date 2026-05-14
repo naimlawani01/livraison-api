@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text
+from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Index
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
@@ -7,6 +7,12 @@ from ..core.database import Base
 
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
+
+    # Index composite — voir migration 017. Accélère le listing historique
+    # d'un livreur trié par date desc (endpoint /me/wallet/transactions).
+    __table_args__ = (
+        Index("ix_wallet_transactions_livreur_created", "livreur_id", "created_at"),
+    )
 
     id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     livreur_id  = Column(UUID(as_uuid=True), ForeignKey("livreurs.id", ondelete="CASCADE"), nullable=False)

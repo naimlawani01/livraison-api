@@ -42,6 +42,24 @@ This directory contains the main API for the Sonaiyaa project.
 - **Concurrent wallet operations**: Any code that reads-then-writes the livreur `solde_disponible` MUST use `select(Livreur).where(...).with_for_update()` to lock the row (cf. `wallet.py:demander_retrait`). Without it, two concurrent requests can dual-debit the same balance — costs real money.
 - **Logs**: Logging is JSON-structured via `python-json-logger` (see `main.py`). Pass `extra={"key": value}` so the fields are searchable in Railway / Sentry. Avoid bare `print()`.
 - **Sentry**: Errors are auto-captured if `SENTRY_DSN` is set in env. Use `sentry_sdk.set_user({"id": str(user.id)})` in middlewares/dependencies if you want richer context.
+- **Rate limiting**: `slowapi` is wired in `app/main.py` with Redis as storage backend (shared across uvicorn workers). To rate-limit a new endpoint:
+  ```python
+  from ....core.rate_limit import limiter
+  @router.post("/my-endpoint")
+  @limiter.limit("10/minute")  # by client IP
+  async def my_endpoint(request: Request, ...):
+      ...
+  ```
+  ⚠️ `request: Request` **must** be the first parameter — slowapi needs it to read the client IP. Existing limits:
+  | Endpoint | Limit | Reason |
+  |---|---|---|
+  | `/auth/login` | 10/min | anti brute-force |
+  | `/auth/register` | 5/hour | anti spam |
+  | `/auth/request-otp` | 10/hour | + the custom `_check_otp_rate_limit` (3/5min by phone) |
+  | `/auth/verify-otp` | 20/hour | + custom OTP rate limit |
+  | `/loc/{token}/submit` | 20/min | public endpoint, anti flood |
+  | (everything else) | 120/min default | global guardrail |
+- **DB composite indexes**: hot query paths have composite indexes (see `app/models/commande.py:__table_args__` and `wallet_transaction.py`). Migration `017_add_composite_indexes.py` applies them in prod. When adding a query that filters on multiple columns at once, check if an index covers it — otherwise add one (in the model + a migration).
 - **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_partenaire` dependencies (from `app/api/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS.
 - **State Machine**: Order statuses must strictly follow the flow defined in the `TRANSITIONS_VALIDES` dictionary (in `app/api/v1/endpoints/commandes.py`). No wild/unauthorized transitions.
 - **WebSockets**: The WS connection requires the JWT token as a query parameter `?token=xxx`. The `ConnectionManager` uses Redis Pub/Sub for broadcasting across multiple workers.

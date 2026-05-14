@@ -9,8 +9,9 @@ Flux :
 """
 import secrets
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
+from ....core.rate_limit import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
@@ -91,7 +92,9 @@ async def location_page(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/loc/{token}/submit")
+@limiter.limit("20/minute")
 async def submit_location(
+    request: Request,
     token: str,
     data: LocationSubmit,
     db: AsyncSession = Depends(get_db),

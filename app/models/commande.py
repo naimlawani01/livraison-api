@@ -1,4 +1,7 @@
-from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Enum as SQLEnum, Integer, Boolean
+from sqlalchemy import (
+    Column, String, Float, ForeignKey, DateTime, Text, Enum as SQLEnum,
+    Integer, Boolean, Index,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -27,7 +30,16 @@ class ModePaiement(str, enum.Enum):
 class Commande(Base):
     """Modèle pour les commandes de livraison"""
     __tablename__ = "commandes"
-    
+
+    # Indexes composites — voir migration 017 et CLAUDE.md backend.
+    # Ces indexes accélèrent les queries fréquentes filtrant sur plusieurs
+    # colonnes à la fois.
+    __table_args__ = (
+        Index("ix_commandes_partenaire_status", "partenaire_id", "status"),
+        Index("ix_commandes_livreur_status", "livreur_id", "status"),
+        Index("ix_commandes_status_created", "status", "created_at"),
+    )
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     numero_commande = Column(String(50), unique=True, nullable=False, index=True)
     

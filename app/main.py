@@ -196,6 +196,39 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ────────────────────────────────────────────────────────────────────────
+# Rate limiting — slowapi avec backend Redis (partagé entre workers)
+# ────────────────────────────────────────────────────────────────────────
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from .core.rate_limit import limiter
+
+app.state.limiter = limiter
+
+
+async def _rate_limit_handler(request, exc: RateLimitExceeded):
+    """Réponse JSON propre quand un client dépasse la limite (429)."""
+    from fastapi.responses import JSONResponse
+    logger.warning(
+        "rate_limit_exceeded",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "client_ip": request.client.host if request.client else "unknown",
+            "limit": str(exc.detail),
+        },
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Trop de requêtes. Réessayez dans un instant.",
+        },
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # Configuration CORS
 app.add_middleware(
     CORSMiddleware,

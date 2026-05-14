@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
@@ -10,6 +10,7 @@ from ....core.security import (
     create_refresh_token,
     generate_otp
 )
+from ....core.rate_limit import limiter
 from ....models.user import User
 from ....models.livreur import Livreur
 from ....schemas.user import (
@@ -51,7 +52,9 @@ async def _check_otp_rate_limit(phone: str) -> None:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/hour")
 async def register(
+    request: Request,
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
@@ -102,7 +105,9 @@ async def register(
 
 
 @router.post("/request-otp")
+@limiter.limit("10/hour")
 async def request_otp(
+    request: Request,
     otp_request: OTPRequest,
     db: AsyncSession = Depends(get_db)
 ):
@@ -130,7 +135,9 @@ async def request_otp(
 
 
 @router.post("/verify-otp", response_model=TokenResponse)
+@limiter.limit("20/hour")
 async def verify_otp(
+    request: Request,
     otp_verify: OTPVerify,
     db: AsyncSession = Depends(get_db)
 ):
@@ -181,7 +188,9 @@ async def verify_otp(
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     login_data: UserLogin,
     db: AsyncSession = Depends(get_db)
 ):
