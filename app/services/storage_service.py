@@ -64,7 +64,13 @@ class StorageService:
         return f"{public_url}/{key}"
 
     def presigned_url(self, key: str, expires_in: int = 3600) -> Optional[str]:
-        """URL signée temporaire pour que l'admin puisse visualiser un document privé."""
+        """URL signée temporaire pour que l'admin puisse visualiser un document privé.
+
+        Version synchrone — utilisée quand on n'a pas de contexte async ou
+        que la perf n'est pas critique. Préférer `presigned_url_cached()`
+        depuis les endpoints async (admin), qui évite de recalculer une
+        URL pour la même clé pendant ~90% de son TTL.
+        """
         if not self._client:
             return None
         try:
@@ -75,6 +81,38 @@ class StorageService:
             )
         except Exception:
             return None
+
+    async def presigned_url_cached(
+        self, key: str, expires_in: int = 3600
+    ) -> Optional[str]:
+        """Variante async de `presigned_url()` avec cache Redis.
+
+        Évite de re-générer une URL identique à chaque clic admin dans
+        ValidationPage / LivreursPage. Cache valable 90% du TTL pour avoir
+        une marge de sécurité avant expiration.
+
+        Si Redis est indisponible, fallback transparent sur `presigned_url()`.
+        """
+        if not self._client:
+            return None
+
+        cache_key = f"r2:url:{key}:exp{expires_in}"
+        try:
+            from ..core.redis import redis_client
+            cached = await redis_client.get(cache_key)
+            if cached:
+                # `redis-py` async retourne str ou bytes selon la version
+                return cached.decode() if isinstance(cached, bytes) else cached
+
+            url = self.presigned_url(key, expires_in=expires_in)
+            if url:
+                # Cache 90% du TTL — assure que l'URL en cache reste valide
+                # quand un client l'utilise juste après l'avoir lue.
+                await redis_client.set(cache_key, url, ex=int(expires_in * 0.9))
+            return url
+        except Exception:
+            # Redis down ou erreur sérialization → on génère sans cache
+            return self.presigned_url(key, expires_in=expires_in)
 
     def _key_from_url(self, url: str) -> Optional[str]:
         """Extrait la clé R2 depuis une URL publique complète."""

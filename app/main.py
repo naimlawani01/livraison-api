@@ -326,13 +326,91 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Vérification de santé de l'API"""
+    """Liveness probe (rapide, ~ms) — utilisé par Railway et les LB.
+
+    Retourne 200 dès que le process Python répond. Ne vérifie PAS les
+    dépendances pour ne pas faire trembler le load balancer si Redis a
+    une micro-coupure (le worker tourne, c'est suffisant pour rester en
+    service). Pour le monitoring fonctionnel, utiliser `/health/deep`.
+    """
     from .services.notification_service import notification_service
     return {
         "status": "healthy",
         "version": settings.APP_VERSION,
-        "firebase_push": "ok" if notification_service.firebase_app else "disabled"
+        "firebase_push": "ok" if notification_service.firebase_app else "disabled",
     }
+
+
+@app.get("/health/deep")
+async def health_deep():
+    """Readiness probe (lent, ~50-200ms) — utilisé par UptimeRobot/BetterStack.
+
+    Vérifie les dépendances critiques (DB, Redis, R2). Retourne 503 si
+    l'une est down — l'app reste live mais signale qu'elle est en mode
+    dégradé, permettant à un monitoring externe de t'alerter.
+
+    GeniusPay n'est pas vérifié ici : c'est une dépendance externe dont
+    une coupure transitoire ne doit pas flag Sönaiyaa en degraded.
+    """
+    from sqlalchemy import text
+    from fastapi.responses import JSONResponse
+    from .core.redis import redis_client
+    from .core.database import async_session_maker
+    from .services.storage_service import storage_service
+    from .services.notification_service import notification_service
+
+    checks: Dict[str, str] = {}
+    overall = "ok"
+
+    # DB
+    try:
+        async with async_session_maker() as db:
+            await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:  # noqa: BLE001
+        checks["database"] = f"error: {e!r}"
+        overall = "degraded"
+
+    # Redis
+    try:
+        pong = await redis_client.ping()
+        checks["redis"] = "ok" if pong else "no-pong"
+        if not pong:
+            overall = "degraded"
+    except Exception as e:  # noqa: BLE001
+        checks["redis"] = f"error: {e!r}"
+        overall = "degraded"
+
+    # R2 (head_bucket — léger, juste vérifie creds + reachability)
+    try:
+        if storage_service.is_ready:
+            # boto3 head_bucket est sync — on l'appelle dans un thread
+            # pour ne pas bloquer la boucle async sur la latence réseau.
+            import asyncio as _asyncio
+            await _asyncio.to_thread(
+                storage_service._client.head_bucket,
+                Bucket=settings.R2_BUCKET_NAME,
+            )
+            checks["r2"] = "ok"
+        else:
+            checks["r2"] = "not_configured"
+    except Exception as e:  # noqa: BLE001
+        checks["r2"] = f"error: {e!r}"
+        overall = "degraded"
+
+    # Firebase (juste si le SDK est init, pas de ping réseau)
+    checks["firebase"] = "ok" if notification_service.firebase_app else "disabled"
+
+    status_code = 200 if overall == "ok" else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": overall,
+            "checks": checks,
+            "version": settings.APP_VERSION,
+            "environment": settings.ENVIRONMENT,
+        },
+    )
 
 
 @app.websocket("/ws/{user_id}/{user_type}")

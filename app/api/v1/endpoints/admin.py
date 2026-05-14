@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from typing import List, Literal, Optional
@@ -212,7 +212,25 @@ async def get_platform_stats(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les statistiques de la plateforme"""
+    """Obtenir les statistiques de la plateforme.
+
+    Résultat caché 60s en Redis pour éviter les 11 requêtes d'agrégation
+    sur chaque rafraîchissement de la page Dashboard admin. Si le cache
+    est froid, on calcule et on stocke. Si Redis est down, on tombe sur
+    le calcul direct sans cache (graceful degradation).
+    """
+    import json
+    from ....core.redis import redis_client
+    CACHE_KEY = "admin:stats:v1"
+    CACHE_TTL = 60  # secondes
+
+    try:
+        cached = await redis_client.get(CACHE_KEY)
+        if cached:
+            return json.loads(cached if isinstance(cached, str) else cached.decode())
+    except Exception:
+        pass  # Redis down → on calcule sans cache
+
     # Nombre total d'utilisateurs
     users_query = select(func.count(User.id))
     users_result = await db.execute(users_query)
@@ -275,7 +293,7 @@ async def get_platform_stats(
     # Taux de complétion
     taux_completion = round((commandes_terminees / total_commandes * 100), 1) if total_commandes > 0 else 0.0
 
-    return {
+    result = {
         "total_utilisateurs": total_users,
         "total_partenaires": total_partenaires,
         "total_livreurs": total_livreurs,
@@ -288,6 +306,14 @@ async def get_platform_stats(
         "revenus_totaux": revenus_totaux,
         "retraits_en_attente": retraits_en_attente,
     }
+
+    # Cache le résultat 60s (silencieux si Redis down)
+    try:
+        await redis_client.set(CACHE_KEY, json.dumps(result, default=str), ex=CACHE_TTL)
+    except Exception:
+        pass
+
+    return result
 
 
 @router.get("/livreurs/en-attente", response_model=List[dict])
@@ -419,12 +445,24 @@ async def suspendre_livreur(
 @router.get("/livreurs/tous", response_model=List[dict])
 async def get_tous_livreurs(
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    """Obtenir tous les livreurs"""
+    """Obtenir les livreurs (paginé — cap à 200 par défaut, max 500).
+
+    Les params `?limit=` et `?offset=` permettent à l'admin-web de paginer
+    quand la base atteint plusieurs centaines de livreurs.
+    """
     from sqlalchemy.orm import selectinload
 
-    query = select(Livreur).options(selectinload(Livreur.user)).order_by(Livreur.created_at.desc())
+    query = (
+        select(Livreur)
+        .options(selectinload(Livreur.user))
+        .order_by(Livreur.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     livreurs = result.scalars().all()
     
@@ -612,12 +650,20 @@ async def suspendre_partenaire(
 @router.get("/partenaires/tous", response_model=List[dict])
 async def get_tous_partenaires(
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    """Obtenir tous les partenaires"""
+    """Obtenir les partenaires (paginé — cap à 200 par défaut, max 500)."""
     from sqlalchemy.orm import selectinload
 
-    query = select(Partenaire).options(selectinload(Partenaire.user)).order_by(Partenaire.created_at.desc())
+    query = (
+        select(Partenaire)
+        .options(selectinload(Partenaire.user))
+        .order_by(Partenaire.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     partenaires = result.scalars().all()
     
@@ -834,11 +880,14 @@ async def get_tous_users(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
     role: str = None,
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    """Lister tous les utilisateurs avec filtre optionnel par rôle"""
+    """Lister les utilisateurs avec filtre optionnel par rôle (paginé — cap 200, max 500)."""
     query = select(User).order_by(User.created_at.desc())
     if role:
         query = query.where(User.role == role)
+    query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     users = result.scalars().all()
 
