@@ -58,6 +58,22 @@ async def relancer_paiement(
     if commande.status not in (CommandeStatus.CREEE,):
         raise HTTPException(status_code=400, detail=f"Impossible de relancer — statut: {commande.status}")
 
+    # Idempotency : verrou Redis 60s pour éviter de générer plusieurs
+    # références GeniusPay sur un double-clic ou un retry réseau. Si le
+    # même partenaire relance la même commande dans les 60s, on retourne
+    # le lien existant sans rappeler GeniusPay.
+    from ....core.redis import redis_client
+    lock_key = f"relancer_lock:{commande_id}"
+    lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=60)
+
+    if not lock_acquired and commande.geniuspay_reference and commande.geniuspay_checkout_url:
+        # Double-clic / retry — retourne le lien existant tel quel.
+        return {
+            "reference": commande.geniuspay_reference,
+            "checkout_url": commande.geniuspay_checkout_url,
+            "idempotent_replay": True,
+        }
+
     try:
         paiement = await genius_pay_service.initier_paiement(
             commande_id=str(commande.id),
@@ -67,6 +83,8 @@ async def relancer_paiement(
             nom_client=commande.contact_client_nom,
         )
     except GeniusPayError as e:
+        # Libère le verrou si GeniusPay rejette, sinon on resterait bloqué 60s
+        await redis_client.delete(lock_key)
         raise HTTPException(status_code=502, detail=str(e))
 
     commande.geniuspay_reference = paiement.get("reference")

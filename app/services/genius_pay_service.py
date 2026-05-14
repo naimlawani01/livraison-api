@@ -127,23 +127,37 @@ def verify_webhook_signature(
     signature: str,
     timestamp: str,
     *,
-    max_age_seconds: int = 300,
+    max_age_seconds: int = 900,  # 15 min — GeniusPay peut retry pendant ce délai
 ) -> bool:
     """
     Vérifie la signature HMAC-SHA256 du webhook GeniusPay.
     Format : HMAC-SHA256(timestamp + "." + json_payload, whsec_xxx)
-    Rejette les webhooks > 5 min (protection replay attack).
+
+    `max_age_seconds=900` (15 min) — tolère les délais réseau et les retries
+    GeniusPay légitimes. La fenêtre était à 5 min auparavant, ce qui pouvait
+    faire perdre des paiements valides quand le webhook arrivait en retard
+    (file de retry GeniusPay). Reste assez court pour empêcher le replay
+    d'un attaquant qui intercepterait un webhook ancien.
     """
     secret = settings.GENIUSPAY_WEBHOOK_SECRET
     if not secret:
         logger.warning("GENIUSPAY_WEBHOOK_SECRET non configuré — webhook non vérifié")
         return False
 
-    # Protection replay
+    # Protection replay + log warning si webhook entre 5 et 15 min (on l'accepte
+    # mais c'est inhabituel — visibilité pour diagnostic).
     try:
-        if abs(time.time() - int(timestamp)) > max_age_seconds:
-            logger.warning("Webhook GeniusPay trop ancien (timestamp: %s)", timestamp)
+        age = abs(time.time() - int(timestamp))
+        if age > max_age_seconds:
+            logger.warning(
+                "Webhook GeniusPay trop ancien (timestamp: %s, age=%ds, max=%ds)",
+                timestamp, int(age), max_age_seconds,
+            )
             return False
+        if age > 300:
+            logger.warning(
+                "Webhook GeniusPay tardif mais accepté (age=%ds)", int(age),
+            )
     except (ValueError, TypeError):
         return False
 

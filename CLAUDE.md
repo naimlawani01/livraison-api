@@ -34,6 +34,7 @@ This directory contains the main API for the Sonaiyaa project.
 - `DEFAULT_SEARCH_RADIUS_KM`, `MAX_SEARCH_RADIUS_KM`, `MIN_SEARCH_RADIUS_KM` — Geolocation for driver matching
 - `SENTRY_DSN` — Optionnel. Si renseigné, Sentry capture les exceptions FastAPI + SQLAlchemy. Laisser vide pour désactiver. `send_default_pii=False` est forcé (évite de fuiter password/OTP).
 - `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`) — Fraction des requêtes tracées (perf monitoring).
+- `SENTRY_ENABLE_LOGS` (default `False`) — `True` pour envoyer aussi `logger.warning`/`info` à Sentry (debug). Permet de basculer le niveau de capture sans redéployer.
 - `ENVIRONMENT` (default `production`) — Identifie le déploiement dans Sentry.
 
 ## Specific Rules & Architecture

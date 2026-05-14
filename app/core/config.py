@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # SENTRY_TRACES_SAMPLE_RATE — % de requêtes tracées (0.0 = aucune).
     # Garder bas en prod pour ne pas exploser le quota Sentry.
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+    # SENTRY_ENABLE_LOGS — `True` pour envoyer aussi les logger.warning/info
+    # à Sentry (utile pour debug d'incident). `False` (défaut) = error only.
+    # Set via Railway variable, pas de redeploy nécessaire pour basculer.
+    SENTRY_ENABLE_LOGS: bool = False
 
     # Verbosité — séparé de DEBUG pour ne pas noyer les logs en dev
     SQLALCHEMY_ECHO: bool = False  # SQLALCHEMY_ECHO=true pour debug SQL ponctuel

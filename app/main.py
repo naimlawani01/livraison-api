@@ -51,10 +51,11 @@ if settings.SENTRY_DSN:
             release=f"sonaiyaa-backend@{settings.APP_VERSION}",
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             integrations=[FastApiIntegration(), SqlalchemyIntegration()],
-            # Capture aussi les logs Python (logger.warning/error) en plus
-            # des exceptions non gérées. Permet de voir dans Sentry tous les
-            # `logger.warning("...")` qu'on émet dans le code.
-            enable_logs=True,
+            # `enable_logs` contrôlé par env var `SENTRY_ENABLE_LOGS` :
+            # - False (défaut) → mode error only (exceptions + logger.error)
+            # - True           → capture aussi logger.warning/info (debug)
+            # Bascule via Railway sans redéploiement nécessaire.
+            enable_logs=settings.SENTRY_ENABLE_LOGS,
             # Ne pas envoyer les bodies des requêtes (peut contenir des
             # données sensibles : password, tokens, OTP, montants).
             send_default_pii=False,
@@ -64,17 +65,6 @@ if settings.SENTRY_DSN:
             "sentry_initialized",
             extra={"environment": settings.ENVIRONMENT, "dsn_present": True},
         )
-        # Ping de vérification : envoie un message à Sentry au démarrage
-        # pour confirmer que la connexion fonctionne. Visible dans
-        # Sentry → Issues onglet "All" filter "level: info".
-        try:
-            sentry_sdk.capture_message(
-                f"backend_started env={settings.ENVIRONMENT} "
-                f"version={settings.APP_VERSION}",
-                level="info",
-            )
-        except Exception:  # noqa: BLE001
-            pass
     except Exception as e:  # noqa: BLE001
         logger.warning("sentry_init_failed", extra={"error": str(e)})
 else:
@@ -102,21 +92,59 @@ class ConnectionManager:
         asyncio.create_task(self._listen_to_redis())
 
     async def _listen_to_redis(self):
-        """Tâche asynchrone pour recevoir les messages de Redis"""
-        try:
-            async for message in self.pubsub.listen():
-                if message["type"] == "message":
-                    data = json.loads(message["data"])
-                    target = data.get("target")
-                    payload = data.get("payload")
-                    
-                    if target == "livreurs":
-                        await self._local_broadcast_to_livreurs(payload)
-                    elif target.startswith("user:"):
-                        user_id = target.split(":")[1]
-                        await self._local_send_personal_message(user_id, payload)
-        except Exception as e:
-            logger.error(f"Redis PubSub listener error: {e}")
+        """Boucle de listening Pub/Sub avec reconnexion auto.
+
+        Les serveurs Redis hébergés (Railway / Redis Cloud) ferment les
+        connexions Pub/Sub idle au bout de quelques minutes. Sans reconnect,
+        on perd silencieusement le broadcast multi-worker.
+
+        Stratégie :
+        - On consomme la queue async dans une boucle infinie
+        - Sur Exception : log + sleep avec backoff exponentiel
+          (1s → 2s → 4s → ... cap à 60s)
+        - On recrée la connexion pubsub + on resubscribe au channel
+        - `asyncio.CancelledError` (worker stop) → on sort proprement
+        """
+        backoff = 1  # secondes
+        while True:
+            try:
+                async for message in self.pubsub.listen():
+                    if message["type"] == "message":
+                        data = json.loads(message["data"])
+                        target = data.get("target")
+                        payload = data.get("payload")
+
+                        if target == "livreurs":
+                            await self._local_broadcast_to_livreurs(payload)
+                        elif target.startswith("user:"):
+                            user_id = target.split(":")[1]
+                            await self._local_send_personal_message(user_id, payload)
+                # Si la boucle sort proprement (rare), reset le backoff
+                backoff = 1
+            except asyncio.CancelledError:
+                logger.info("redis_pubsub_listener_cancelled")
+                raise
+            except Exception as e:
+                logger.warning(
+                    "redis_pubsub_listener_error_reconnecting",
+                    extra={"error": str(e), "retry_in_seconds": backoff},
+                )
+                await asyncio.sleep(backoff)
+                try:
+                    self.pubsub = self.redis.pubsub()
+                    await self.pubsub.subscribe("livraison_ws")
+                    logger.warning(
+                        "redis_pubsub_reconnected",
+                        extra={"after_seconds": backoff},
+                    )
+                    backoff = 1  # reset après reconnect réussi
+                except Exception as reconn_err:  # noqa: BLE001
+                    logger.error(
+                        "redis_pubsub_reconnect_failed",
+                        extra={"error": str(reconn_err), "next_retry_in": backoff * 2},
+                    )
+                    # Exponential backoff capped à 60s
+                    backoff = min(backoff * 2, 60)
 
     async def connect(self, user_id: str, user_type: str, websocket: WebSocket):
         """Connecter un utilisateur localement au worker actuel"""
@@ -333,31 +361,49 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
         return
     
     await manager.connect(user_id, user_type, websocket)
-    
+
+    # Idle timeout : si le client ne ping pas pendant `WS_IDLE_TIMEOUT_S`,
+    # on considère la connexion comme morte (crash app, coupure réseau
+    # brutale, etc.) et on disconnect — évite l'accumulation de handles
+    # zombies côté serveur. Les apps mobiles envoient un ping toutes les
+    # ~15-30s en pratique, donc 60s laisse de la marge.
+    WS_IDLE_TIMEOUT_S = 60
+
     try:
         while True:
-            data = await websocket.receive_json()
-            
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=WS_IDLE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.info(
+                    f"WebSocket idle timeout for user {user_id} "
+                    f"(>{WS_IDLE_TIMEOUT_S}s without message)"
+                )
+                await websocket.close(code=4002, reason="Idle timeout")
+                break
+
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
-            
+
             elif data.get("type") == "location_update" and user_type == "livreur":
                 await manager.send_personal_message(user_id, {
                     "type": "location_updated",
                     "status": "ok"
                 })
-            
+
             elif data.get("type") == "nouvelle_commande" and user_type == "partenaire":
                 await manager.broadcast_to_livreurs({
                     "type": "nouvelle_commande",
                     "data": data.get("commande")
                 })
-            
+
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
         logger.info(f"WebSocket disconnected for user {user_id}")
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")
+    finally:
         manager.disconnect(user_id)
 
 
