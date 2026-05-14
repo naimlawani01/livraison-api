@@ -51,15 +51,34 @@ if settings.SENTRY_DSN:
             release=f"sonaiyaa-backend@{settings.APP_VERSION}",
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+            # Capture aussi les logs Python (logger.warning/error) en plus
+            # des exceptions non gérées. Permet de voir dans Sentry tous les
+            # `logger.warning("...")` qu'on émet dans le code.
+            enable_logs=True,
             # Ne pas envoyer les bodies des requêtes (peut contenir des
             # données sensibles : password, tokens, OTP, montants).
             send_default_pii=False,
         )
-        logger.info("sentry_initialized", extra={"environment": settings.ENVIRONMENT})
+        # WARNING level — visible même en prod (où le root logger est WARNING+)
+        logger.warning(
+            "sentry_initialized",
+            extra={"environment": settings.ENVIRONMENT, "dsn_present": True},
+        )
+        # Ping de vérification : envoie un message à Sentry au démarrage
+        # pour confirmer que la connexion fonctionne. Visible dans
+        # Sentry → Issues onglet "All" filter "level: info".
+        try:
+            sentry_sdk.capture_message(
+                f"backend_started env={settings.ENVIRONMENT} "
+                f"version={settings.APP_VERSION}",
+                level="info",
+            )
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as e:  # noqa: BLE001
         logger.warning("sentry_init_failed", extra={"error": str(e)})
 else:
-    logger.info("sentry_disabled_no_dsn")
+    logger.warning("sentry_disabled_no_dsn")
 
 import asyncio
 import json

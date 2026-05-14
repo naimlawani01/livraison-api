@@ -38,9 +38,12 @@ _storage_uri = settings.REDIS_URL if getattr(settings, "REDIS_URL", None) else "
 limiter = Limiter(
     key_func=_key_func,
     storage_uri=_storage_uri,
-    # Headers `X-RateLimit-*` exposés au client pour debug
-    headers_enabled=True,
-    # Limite par défaut pour tous les endpoints non décorés explicitement —
-    # garde-fou large (anti-DDOS basique).
-    default_limits=["120/minute"],
+    # ⚠️ headers_enabled=False — quand True, slowapi tente d'injecter les
+    # headers `X-RateLimit-*` dans la réponse mais ça crash pour les
+    # endpoints async retournant un modèle Pydantic (Response pas encore
+    # construite au moment de l'injection). Bug connu de slowapi 0.1.x.
+    headers_enabled=False,
+    # Pas de default_limits — on rate-limit explicitement endpoint par
+    # endpoint avec le décorateur. Évite des surprises sur les endpoints
+    # legitimes à fort trafic (WS, polling, etc.).
 )

@@ -35,7 +35,7 @@ redis==5.0.1
 
 # Monitoring & Logging
 python-json-logger==2.0.7
-sentry-sdk[fastapi]==2.18.0
+sentry-sdk[fastapi]==2.35.0
 
 # Rate limiting (backend Redis pour partager l'état entre workers Railway)
 slowapi==0.1.9
