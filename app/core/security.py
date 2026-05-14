@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
@@ -58,6 +59,18 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 
 def generate_otp() -> str:
-    """Générer un code OTP à 6 chiffres"""
-    import random
-    return str(random.randint(100000, 999999))
+    """Générer un code OTP à 6 chiffres avec un générateur cryptographiquement sûr.
+
+    Utilise `secrets` plutôt que `random` (ce dernier est prédictible si
+    on connaît le seed — risque de brute-force pour bypass OTP).
+    """
+    return str(secrets.randbelow(900_000) + 100_000)
+
+
+def generate_delivery_code() -> str:
+    """Générer un code PIN de livraison à 4 chiffres (crypto-safe).
+
+    Utilisé pour confirmer la livraison auprès du client. Doit être
+    imprévisible pour qu'un attaquant ne puisse pas usurper la livraison.
+    """
+    return str(secrets.randbelow(9_000) + 1_000)

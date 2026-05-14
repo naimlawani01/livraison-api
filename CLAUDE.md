@@ -32,9 +32,16 @@ This directory contains the main API for the Sonaiyaa project.
 - `FIREBASE_CREDENTIALS` (inline JSON) or `FIREBASE_CREDENTIALS_PATH` — Push notifications
 - `MAX_COURSES_SIMULTANEES` (default: 2) — Max parallel deliveries per driver
 - `DEFAULT_SEARCH_RADIUS_KM`, `MAX_SEARCH_RADIUS_KM`, `MIN_SEARCH_RADIUS_KM` — Geolocation for driver matching
+- `SENTRY_DSN` — Optionnel. Si renseigné, Sentry capture les exceptions FastAPI + SQLAlchemy. Laisser vide pour désactiver. `send_default_pii=False` est forcé (évite de fuiter password/OTP).
+- `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`) — Fraction des requêtes tracées (perf monitoring).
+- `ENVIRONMENT` (default `production`) — Identifie le déploiement dans Sentry.
 
 ## Specific Rules & Architecture
 - **Dates & Times**: Never use `datetime.utcnow()` (deprecated). Always use `datetime.now(timezone.utc)`. In SQLAlchemy models, use `DateTime(timezone=True)`.
+- **Cryptographically random codes**: Never use `random.randint()` for OTPs, delivery codes, or any token that an attacker could try to guess. Use `secrets` instead — wrappers ready in `app/core/security.py` (`generate_otp()`, `generate_delivery_code()`).
+- **Concurrent wallet operations**: Any code that reads-then-writes the livreur `solde_disponible` MUST use `select(Livreur).where(...).with_for_update()` to lock the row (cf. `wallet.py:demander_retrait`). Without it, two concurrent requests can dual-debit the same balance — costs real money.
+- **Logs**: Logging is JSON-structured via `python-json-logger` (see `main.py`). Pass `extra={"key": value}` so the fields are searchable in Railway / Sentry. Avoid bare `print()`.
+- **Sentry**: Errors are auto-captured if `SENTRY_DSN` is set in env. Use `sentry_sdk.set_user({"id": str(user.id)})` in middlewares/dependencies if you want richer context.
 - **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_partenaire` dependencies (from `app/api/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS.
 - **State Machine**: Order statuses must strictly follow the flow defined in the `TRANSITIONS_VALIDES` dictionary (in `app/api/v1/endpoints/commandes.py`). No wild/unauthorized transitions.
 - **WebSockets**: The WS connection requires the JWT token as a query parameter `?token=xxx`. The `ConnectionManager` uses Redis Pub/Sub for broadcasting across multiple workers.

@@ -11,6 +11,17 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     API_PREFIX: str = "/api/v1"
 
+    # Environment & monitoring
+    # ENVIRONMENT identifie le déploiement dans Sentry / les dashboards
+    # ("production" sur Railway, "staging" si on en a un, "local" en dev).
+    ENVIRONMENT: str = "production"
+    # SENTRY_DSN — laisse vide pour désactiver. Activable juste en mettant
+    # la DSN dans Railway → Variables, sans toucher au code.
+    SENTRY_DSN: Optional[str] = None
+    # SENTRY_TRACES_SAMPLE_RATE — % de requêtes tracées (0.0 = aucune).
+    # Garder bas en prod pour ne pas exploser le quota Sentry.
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+
     # Verbosité — séparé de DEBUG pour ne pas noyer les logs en dev
     SQLALCHEMY_ECHO: bool = False  # SQLALCHEMY_ECHO=true pour debug SQL ponctuel
     

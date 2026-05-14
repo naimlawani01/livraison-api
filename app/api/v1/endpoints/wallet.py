@@ -170,27 +170,43 @@ async def demander_retrait(
             detail=f"Montant minimum de retrait : {montant_min} GNF",
         )
 
-    if body.montant > livreur.solde_disponible:
+    # ⚠️ Verrou pessimiste sur la ligne livreur — empêche deux requêtes
+    # concurrentes de débiter le même solde. Sans `with_for_update()`, un
+    # double-tap ou un retry réseau peut entraîner un retrait dupliqué.
+    locked_q = (
+        select(Livreur).where(Livreur.id == livreur.id).with_for_update()
+    )
+    locked_result = await db.execute(locked_q)
+    locked_livreur = locked_result.scalar_one_or_none()
+    if locked_livreur is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Solde insuffisant. Disponible : {livreur.solde_disponible} GNF",
+            status_code=status.HTTP_404_NOT_FOUND, detail="Livreur introuvable"
         )
 
-    solde_avant = livreur.solde_disponible
-    livreur.solde_disponible -= body.montant
+    if body.montant > locked_livreur.solde_disponible:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Solde insuffisant. Disponible : {locked_livreur.solde_disponible} GNF",
+        )
+
+    solde_avant = locked_livreur.solde_disponible
+    locked_livreur.solde_disponible -= body.montant
 
     txn = WalletTransaction(
-        livreur_id=livreur.id,
+        livreur_id=locked_livreur.id,
         type="retrait",
         montant=body.montant,
         solde_avant=solde_avant,
-        solde_apres=livreur.solde_disponible,
+        solde_apres=locked_livreur.solde_disponible,
         description=f"Retrait {body.methode} → {body.numero_telephone}",
         statut="en_attente",
     )
     db.add(txn)
     await db.commit()
     await db.refresh(txn)
+    # Le verrou est libéré au commit. À partir d'ici, on continue avec
+    # `locked_livreur` qui reflète l'état post-débit.
+    livreur = locked_livreur
 
     # Tenter le payout automatique via GeniusPay
     from ....core.config import settings

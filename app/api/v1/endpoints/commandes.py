@@ -174,8 +174,9 @@ async def create_commande(
 
     commission, montant_livreur = MatchingService.calculer_commission(prix_final)
 
-    import random
-    code_livraison = str(random.randint(1000, 9999)) if commande_data.exige_code_livraison else None
+    # Code livraison crypto-safe (cf. ....core.security.generate_delivery_code)
+    from ....core.security import generate_delivery_code
+    code_livraison = generate_delivery_code() if commande_data.exige_code_livraison else None
 
     commande = Commande(
         numero_commande=Commande.generer_numero_commande(),

@@ -4,28 +4,62 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 import logging
+import sys
 from typing import Dict, Set
 from pathlib import Path
+from pythonjsonlogger import jsonlogger
 from .core.config import settings
 from .core.database import init_db, close_db
 from .api.v1.api import api_router
 
-# Configuration du logging
-logging.basicConfig(
-    level=logging.INFO if settings.DEBUG else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# ────────────────────────────────────────────────────────────────────────
+# Logging — JSON structuré pour Railway / parsing log aggregators
+# ────────────────────────────────────────────────────────────────────────
+# Format JSON avec les champs courants utiles en prod (timestamp, level,
+# logger name, message, et tous les `extra={"..."}`  passés par les endpoints).
+_log_handler = logging.StreamHandler(sys.stdout)
+_log_handler.setFormatter(
+    jsonlogger.JsonFormatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s",
+        rename_fields={"asctime": "timestamp", "levelname": "level"},
+    )
 )
+_root_logger = logging.getLogger()
+_root_logger.handlers = [_log_handler]
+_root_logger.setLevel(logging.INFO if settings.DEBUG else logging.WARNING)
 
 # Réduire le bruit des loggers tiers
-# - uvicorn.access : log toutes les requêtes HTTP (health checks, polling) → WARNING
-# - httpx / urllib3 : log les requêtes sortantes (Twilio, GeniusPay, Firebase) → WARNING
-# - sqlalchemy.engine : pour le cas où SQLALCHEMY_ECHO serait activé par erreur
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+# ────────────────────────────────────────────────────────────────────────
+# Sentry — error tracking (activé uniquement si SENTRY_DSN est set)
+# ────────────────────────────────────────────────────────────────────────
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.ENVIRONMENT,
+            release=f"sonaiyaa-backend@{settings.APP_VERSION}",
+            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+            # Ne pas envoyer les bodies des requêtes (peut contenir des
+            # données sensibles : password, tokens, OTP, montants).
+            send_default_pii=False,
+        )
+        logger.info("sentry_initialized", extra={"environment": settings.ENVIRONMENT})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sentry_init_failed", extra={"error": str(e)})
+else:
+    logger.info("sentry_disabled_no_dsn")
 
 import asyncio
 import json
