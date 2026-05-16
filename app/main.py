@@ -236,11 +236,17 @@ async def lifespan(app: FastAPI):
 
 
 # Créer l'application FastAPI
+# Docs auto-générées (Swagger, ReDoc, OpenAPI) — exposées uniquement en
+# DEBUG/dev, désactivées en prod pour éviter de divulguer la cartographie
+# complète de l'API à un attaquant. Bascule via la variable d'env `DEBUG`.
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     debug=settings.DEBUG,
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
 
 # ────────────────────────────────────────────────────────────────────────
