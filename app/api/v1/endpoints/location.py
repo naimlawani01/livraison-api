@@ -7,6 +7,7 @@ Flux :
 3. Le client ouvre le lien → page HTML qui demande sa position GPS
 4. Le client autorise → sa position est envoyée ici et sauvegardée
 """
+import html as _html
 import secrets
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -18,8 +19,8 @@ from pydantic import BaseModel, Field
 
 from ....core.database import get_db
 from ....models.commande import Commande
-from ....models.user import User
-from ....utils.dependencies import get_current_user
+from ....models.partenaire import Partenaire
+from ....utils.dependencies import get_current_partenaire
 
 router = APIRouter()
 
@@ -37,7 +38,7 @@ class GenerateLocationLinkResponse(BaseModel):
 @router.post("/commandes/{commande_id}/location-link", response_model=GenerateLocationLinkResponse)
 async def generate_location_link(
     commande_id: str,
-    current_user: User = Depends(get_current_user),
+    partenaire: Partenaire = Depends(get_current_partenaire),
     db: AsyncSession = Depends(get_db)
 ):
     """Générer un lien de localisation pour une commande"""
@@ -47,6 +48,9 @@ async def generate_location_link(
 
     if not commande:
         raise HTTPException(status_code=404, detail="Commande non trouvée")
+
+    if str(commande.partenaire_id) != str(partenaire.id):
+        raise HTTPException(status_code=403, detail="Accès non autorisé")
 
     if commande.location_token:
         token = commande.location_token
@@ -415,6 +419,7 @@ def _already_shared_html() -> str:
 
 
 def _error_html(message: str) -> str:
+    safe_message = _html.escape(message)
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -442,7 +447,7 @@ def _error_html(message: str) -> str:
 <body>
 <div class="card">
   <div class="icon">❌</div>
-  <h1>{message}</h1>
+  <h1>{safe_message}</h1>
   <p>Ce lien n'est plus valide. Contactez le partenaire pour obtenir un nouveau lien.</p>
 </div>
 </body>

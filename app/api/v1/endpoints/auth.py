@@ -1,4 +1,6 @@
+import hmac
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
@@ -8,7 +10,9 @@ from ....core.security import (
     get_password_hash,
     create_access_token,
     create_refresh_token,
-    generate_otp
+    generate_otp,
+    blacklist_token,
+    decode_token,
 )
 from ....core.rate_limit import limiter
 from ....models.user import User
@@ -25,6 +29,8 @@ from ....schemas.user import (
 from ....services.sms_service import sms_service
 from ....utils.dependencies import get_current_user
 from ....core.redis import redis_client
+
+_bearer_scheme = HTTPBearer()
 
 router = APIRouter()
 
@@ -154,7 +160,7 @@ async def verify_otp(
             detail="Utilisateur non trouvé"
         )
 
-    if user.otp_code != otp_verify.otp_code:
+    if not user.otp_code or not hmac.compare_digest(user.otp_code, otp_verify.otp_code):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Code OTP invalide"
@@ -236,7 +242,9 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("20/hour")
 async def refresh_access_token(
+    request: Request,
     body: dict,
     db: AsyncSession = Depends(get_db)
 ):
@@ -283,6 +291,22 @@ async def refresh_access_token(
         refresh_token=new_refresh_token,
         user=UserResponse.model_validate(user)
     )
+
+
+@router.post("/logout")
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    current_user: User = Depends(get_current_user),
+):
+    """Révoquer le token d'accès courant (blacklist Redis jusqu'à expiration)."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    jti = payload.get("jti")
+    exp = payload.get("exp")
+    if jti and exp:
+        ttl = max(0, int(exp - datetime.now(timezone.utc).timestamp()))
+        await blacklist_token(jti, ttl)
+    return {"message": "Déconnecté avec succès"}
 
 
 @router.post("/device-token")

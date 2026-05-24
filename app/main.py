@@ -294,8 +294,11 @@ app.add_middleware(
 # Créer le dossier uploads s'il n'existe pas
 Path("uploads/documents").mkdir(parents=True, exist_ok=True)
 
-# Servir les fichiers statiques (documents uploadés)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Servir les fichiers statiques uniquement en mode DEBUG.
+# En production (Railway), les uploads vont dans Cloudflare R2 — le dossier
+# local est vide et exposer ce mount sans auth serait une surface d'attaque inutile.
+if settings.DEBUG:
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Pages légales — chemin absolu relatif à ce fichier (/app/app/main.py → /app/static/pages/)
 _static_pages = Path(__file__).parent.parent / "static" / "pages"
@@ -373,25 +376,23 @@ async def health_deep():
         async with async_session_maker() as db:
             await db.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as e:  # noqa: BLE001
-        checks["database"] = f"error: {e!r}"
+    except Exception:  # noqa: BLE001
+        checks["database"] = "error"
         overall = "degraded"
 
     # Redis
     try:
         pong = await redis_client.ping()
-        checks["redis"] = "ok" if pong else "no-pong"
+        checks["redis"] = "ok" if pong else "error"
         if not pong:
             overall = "degraded"
-    except Exception as e:  # noqa: BLE001
-        checks["redis"] = f"error: {e!r}"
+    except Exception:  # noqa: BLE001
+        checks["redis"] = "error"
         overall = "degraded"
 
     # R2 (head_bucket — léger, juste vérifie creds + reachability)
     try:
         if storage_service.is_ready:
-            # boto3 head_bucket est sync — on l'appelle dans un thread
-            # pour ne pas bloquer la boucle async sur la latence réseau.
             import asyncio as _asyncio
             await _asyncio.to_thread(
                 storage_service._client.head_bucket,
@@ -400,8 +401,8 @@ async def health_deep():
             checks["r2"] = "ok"
         else:
             checks["r2"] = "not_configured"
-    except Exception as e:  # noqa: BLE001
-        checks["r2"] = f"error: {e!r}"
+    except Exception:  # noqa: BLE001
+        checks["r2"] = "error"
         overall = "degraded"
 
     # Firebase (juste si le SDK est init, pas de ping réseau)
@@ -413,8 +414,6 @@ async def health_deep():
         content={
             "status": overall,
             "checks": checks,
-            "version": settings.APP_VERSION,
-            "environment": settings.ENVIRONMENT,
         },
     )
 
@@ -427,12 +426,18 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     user_type: "partenaire", "livreur", "admin"
     Authentification via query param : /ws/{user_id}/{user_type}?token=xxx
     """
+    # Valider user_type
+    _VALID_USER_TYPES = {"partenaire", "livreur", "admin"}
+    if user_type not in _VALID_USER_TYPES:
+        await websocket.close(code=4003, reason="Type utilisateur invalide")
+        return
+
     # Vérifier le JWT avant d'accepter la connexion
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001, reason="Token manquant")
         return
-    
+
     try:
         from .core.security import decode_token
         payload = decode_token(token)
@@ -443,7 +448,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     except Exception:
         await websocket.close(code=4001, reason="Token invalide")
         return
-    
+
     await manager.connect(user_id, user_type, websocket)
 
     # Idle timeout : si le client ne ping pas pendant `WS_IDLE_TIMEOUT_S`,

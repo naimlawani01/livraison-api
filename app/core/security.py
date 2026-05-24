@@ -1,4 +1,5 @@
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
@@ -23,15 +24,15 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """Créer un token d'accès JWT"""
     to_encode = data.copy()
-    
+
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({"exp": expire, "type": "access"})
+
+    to_encode.update({"exp": expire, "type": "access", "jti": str(uuid.uuid4())})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    
+
     return encoded_jwt
 
 
@@ -39,8 +40,8 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
     """Créer un token de rafraîchissement"""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    
+    to_encode.update({"exp": expire, "type": "refresh", "jti": str(uuid.uuid4())})
+
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
@@ -56,6 +57,20 @@ def decode_token(token: str) -> Dict[str, Any]:
             detail="Token invalide ou expiré",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def blacklist_token(jti: str, ttl_seconds: int) -> None:
+    """Invalider un token JWT en stockant son jti dans Redis."""
+    if ttl_seconds <= 0:
+        return
+    from .redis import redis_client
+    await redis_client.set(f"token_blacklist:{jti}", "1", ex=ttl_seconds)
+
+
+async def is_token_blacklisted(jti: str) -> bool:
+    """Retourne True si le jti est dans la blacklist Redis."""
+    from .redis import redis_client
+    return await redis_client.exists(f"token_blacklist:{jti}") > 0
 
 
 def generate_otp() -> str:

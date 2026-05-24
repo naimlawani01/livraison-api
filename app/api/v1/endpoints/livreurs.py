@@ -300,6 +300,19 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Format non supporté. Utilisez une image (JPG, PNG, HEIC) ou un PDF.")
 
     content = await file.read()
+
+    # Vérification des magic bytes — protège contre un fichier malveillant
+    # renommé en .jpg/.pdf. Le content-type déclaré par le client est non fiable.
+    import filetype as _ft
+    _ALLOWED_MIME_REAL = {
+        "image/jpeg", "image/png", "image/heic", "image/heif", "image/webp",
+        "application/pdf",
+    }
+    detected = _ft.guess(content)
+    if detected is None or detected.mime not in _ALLOWED_MIME_REAL:
+        raise HTTPException(status_code=400, detail="Type de fichier non autorisé. Contenu invalide.")
+
+    content_type = detected.mime  # utiliser le type réel, pas celui déclaré
     ext_default = "pdf" if content_type == "application/pdf" else "jpg"
     url = await storage_service.upload_document(
         file_data=content,
