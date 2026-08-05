@@ -16,6 +16,7 @@ from ....utils.dependencies import get_current_admin
 from ....services.notification_service import notification_service
 from ....services import credit_service
 from ....services.soldes import MontantInvalide
+from ....services.storage_service import storage_service
 
 router = APIRouter()
 
@@ -340,11 +341,11 @@ async def get_livreurs_en_attente(
             "type_vehicule": l.type_vehicule,
             "plaque_immatriculation": l.plaque_immatriculation,
             "created_at": l.created_at,
-            # Documents
-            "piece_identite_url": l.piece_identite_url,
-            "vehicule_doc_url": l.vehicule_doc_url,
+            # Documents — URLs présignées temporaires (bucket privé)
+            "piece_identite_url": storage_service.signed_view_url(l.piece_identite_url),
+            "vehicule_doc_url": storage_service.signed_view_url(l.vehicule_doc_url),
             "vehicule_doc_type": l.vehicule_doc_type,
-            "photo_profil_url": l.photo_profil_url,
+            "photo_profil_url": storage_service.signed_view_url(l.photo_profil_url),
             "docs_complets": bool(l.piece_identite_url and l.vehicule_doc_url and l.photo_profil_url),
         }
         for l in livreurs
@@ -521,10 +522,10 @@ async def get_livreur_detail(
         "nombre_evaluations": l.nombre_evaluations,
         "total_gains": l.total_gains,
         "solde_disponible": l.solde_disponible,
-        "piece_identite_url": l.piece_identite_url,
-        "vehicule_doc_url": l.vehicule_doc_url,
+        "piece_identite_url": storage_service.signed_view_url(l.piece_identite_url),
+        "vehicule_doc_url": storage_service.signed_view_url(l.vehicule_doc_url),
         "vehicule_doc_type": l.vehicule_doc_type,
-        "photo_profil_url": l.photo_profil_url,
+        "photo_profil_url": storage_service.signed_view_url(l.photo_profil_url),
         "docs_complets": bool(l.piece_identite_url and l.vehicule_doc_url and l.photo_profil_url),
         "created_at": l.created_at,
     }
@@ -551,8 +552,8 @@ async def get_partenaires_en_attente(
             "phone": r.user.phone if r.user else None,
             "type_partenaire": r.type_partenaire,
             "created_at": r.created_at,
-            # Document
-            "devanture_url": r.devanture_url,
+            # Document — URL présignée temporaire (bucket privé)
+            "devanture_url": storage_service.signed_view_url(r.devanture_url),
             "docs_complets": bool(r.devanture_url),
         }
         for r in partenaires
@@ -728,7 +729,7 @@ async def get_partenaire_detail(
         "note_moyenne": r.note_moyenne,
         "nombre_evaluations": r.nombre_evaluations,
         "nombre_commandes_terminees": nombre_commandes_terminees,
-        "devanture_url": r.devanture_url,
+        "devanture_url": storage_service.signed_view_url(r.devanture_url),
         "docs_complets": bool(r.devanture_url),
         "horaires": r.horaires,
         "created_at": r.created_at,
