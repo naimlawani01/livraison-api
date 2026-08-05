@@ -80,8 +80,10 @@ class Settings(BaseSettings):
     # Courses
     MAX_COURSES_SIMULTANEES: int = 2  # Nombre max de courses en parallèle par livreur
     
-    # Commission
-    PLATFORM_COMMISSION_PERCENTAGE: float = 15.0
+    # Commission — nouveau modèle : 12 %. Source de vérité canonique dans
+    # app/services/pricing.py (TAUX_COMMISSION). Ce paramètre reste pour le code
+    # legacy tant que les endpoints n'ont pas migré vers pricing.calculer_tarif.
+    PLATFORM_COMMISSION_PERCENTAGE: float = 12.0
     
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -92,7 +94,13 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     CORS_ALLOW_ALL_ORIGINS: bool = False
-    
+
+    # Compte admin — seedé par scripts/init_db.py (lu via os.environ dans le script).
+    # Déclarés ici pour ne pas être rejetés comme "extra" par pydantic-settings
+    # (extra='forbid' par défaut) quand ils sont présents dans .env / l'environnement.
+    ADMIN_PHONE: Optional[str] = None
+    ADMIN_PASSWORD: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True

@@ -1,10 +1,11 @@
 from fastapi import APIRouter
-from .endpoints import auth, partenaires, livreurs, commandes, admin, location, tracking, wallet, payments
+from .endpoints import auth, partenaires, livreurs, commandes, admin, location, tracking, wallet, payments, credit
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(partenaires.router, prefix="/partenaires", tags=["Partenaires"])
+api_router.include_router(credit.router, prefix="/partenaires", tags=["Crédit"])
 api_router.include_router(livreurs.router, prefix="/livreurs", tags=["Livreurs"])
 api_router.include_router(wallet.router, prefix="/livreurs", tags=["Wallet"])
 api_router.include_router(commandes.router, prefix="/commandes", tags=["Commandes"])

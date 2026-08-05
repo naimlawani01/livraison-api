@@ -21,6 +21,7 @@ from ....schemas.commande import (
 from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
 from ....services.notification_service import notification_service
+from ....services import pricing, credit_service, soldes
 from ....utils.dependencies import get_current_partenaire, get_current_livreur, get_current_user
 import logging
 import secrets
@@ -106,26 +107,18 @@ async def estimer_prix(
     )
     duree = GeolocationService.estimer_duree_trajet(distance_km)
 
-    # Formule : P = (P_base + d × T_km) × M_colis × M_heure
-    P_base  = 10_000
-    T_km    = 1_500
-    M_colis = _MULT_COLIS.get(nature, 1.0)
-    M_heure = _mult_heure(datetime.now().hour)
-
-    prix_brut  = (P_base + distance_km * T_km) * M_colis * M_heure
-    prix_estime = max(10_000, round(prix_brut / 500) * 500)   # arrondi 500 GNF, min 10 000
-
-    commission     = prix_estime * (settings.PLATFORM_COMMISSION_PERCENTAGE / 100)
-    montant_livreur = prix_estime - commission
+    # Source unique : app/services/pricing.py (12 %, plancher 10 000 + 1 500/km,
+    # colis simplifié, sans surge). Aperçu identique au prix réellement créé.
+    tarif = pricing.calculer_tarif(distance_km, nature)
 
     return {
         "distance_km":          round(distance_km, 2),
         "duree_estimee_minutes": duree,
-        "prix_estime":           prix_estime,
-        "commission_plateforme": round(commission, 2),
-        "montant_livreur":       round(montant_livreur, 2),
-        "multiplicateur_colis":  M_colis,
-        "multiplicateur_heure":  M_heure,
+        "prix_estime":           tarif.prix,
+        "commission_plateforme": tarif.commission,
+        "montant_livreur":       tarif.gain_livreur,
+        "multiplicateur_colis":  tarif.mult_colis,
+        "multiplicateur_heure":  1.0,
     }
 
 
@@ -160,7 +153,6 @@ async def create_commande(
 
     distance_km = None
     duree_estimee = None
-    prix_final = commande_data.prix_propose  # provisoire par défaut
 
     if has_position:
         distance_km = GeolocationService.calculer_distance(
@@ -168,11 +160,16 @@ async def create_commande(
             (commande_data.latitude_client, commande_data.longitude_client),
         )
         duree_estimee = GeolocationService.estimer_duree_trajet(distance_km)
-        # Prix calculé depuis la formule officielle (ne pas faire confiance
-        # à la valeur envoyée par le client mobile — autorité = backend)
-        prix_final = calculer_prix(distance_km, commande_data.nature_colis)
+        # Prix calculé côté backend (autorité) — jamais la valeur du client mobile.
+        tarif = pricing.calculer_tarif(distance_km, commande_data.nature_colis)
+    else:
+        # Position inconnue → prix provisoire au plancher. Il sera recalculé au
+        # partage GPS du client (location.py) et le Crédit ajusté du delta.
+        tarif = pricing.calculer_tarif(0, commande_data.nature_colis)
 
-    commission, montant_livreur = MatchingService.calculer_commission(prix_final)
+    prix_final = tarif.prix
+    commission = tarif.commission
+    montant_livreur = tarif.gain_livreur
 
     # Code livraison crypto-safe (cf. ....core.security.generate_delivery_code)
     from ....core.security import generate_delivery_code
@@ -205,7 +202,26 @@ async def create_commande(
     )
 
     db.add(commande)
-    await db.commit()
+    await db.flush()  # obtient commande.id sans committer (FK du débit Crédit)
+
+    # Réserver la commission sur le Crédit de l'expéditeur — courses CASH uniquement.
+    # (Le MoBILE MONEY est encaissé auprès du client, le Crédit n'est pas concerné.)
+    # Le débit atomique EST le garde-fou : Crédit insuffisant → rien n'est créé.
+    if commande.mode_paiement == ModePaiement.CASH:
+        try:
+            await credit_service.debiter_commission(
+                db, partenaire.id, commission,
+                commande_id=commande.id,
+                description=f"Commission course #{commande.numero_commande}",
+            )
+        except soldes.SoldeInsuffisant:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Crédit insuffisant pour créer cette course. Rechargez votre Crédit.",
+            )
+    else:
+        await db.commit()
     await db.refresh(commande)
 
     checkout_url: Optional[str] = None
@@ -455,17 +471,10 @@ async def accepter_commande(
             detail="Vous devez être en ligne pour accepter une course"
         )
 
-    # Pour les courses en espèces, vérifier que le wallet couvre la commission
-    if commande.mode_paiement == ModePaiement.CASH:
-        if livreur.solde_disponible < commande.commission_plateforme:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Solde insuffisant pour accepter cette course en espèces. "
-                       f"Commission requise : {commande.commission_plateforme:.0f} GNF. "
-                       f"Votre solde : {livreur.solde_disponible:.0f} GNF. "
-                       f"Rechargez votre wallet."
-            )
-    
+    # Nouveau modèle : plus de garde-fou côté livreur. La commission est réservée
+    # sur le Crédit de l'expéditeur à la création de la course ; le livreur, lui,
+    # est réglé en cash par l'expéditeur — il n'a aucune avance à faire.
+
     # Compter les courses actives du livreur
     active_statuses = [CommandeStatus.ACCEPTEE, CommandeStatus.EN_RECUPERATION, CommandeStatus.EN_LIVRAISON]
     count_query = select(func.count()).where(
@@ -558,13 +567,12 @@ async def update_commande_status(
                 )
         commande.livree_at = datetime.now(timezone.utc)
         livreur.nombre_courses_completees += 1
-        livreur.total_gains += commande.montant_livreur  # gains totaux toujours comptés
-
-        solde_avant = livreur.solde_disponible
+        livreur.total_gains += commande.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
         if commande.mode_paiement == ModePaiement.MOBILE_MONEY:
-            # La plateforme a encaissé → reverse le montant livreur sur le wallet
-            livreur.solde_disponible += commande.montant_livreur
+            # La plateforme a encaissé le client → crédite les Gains (retirables) du livreur.
+            solde_avant = livreur.solde_disponible
+            livreur.solde_disponible = soldes.gains_crediter(solde_avant, commande.montant_livreur)
             txn = WalletTransaction(
                 livreur_id=livreur.id,
                 type="credit",
@@ -576,20 +584,9 @@ async def update_commande_status(
                 statut="complete",
             )
             db.add(txn)
-        else:
-            # CASH : le livreur a encaissé lui-même → on lui débite la commission plateforme
-            livreur.solde_disponible -= commande.commission_plateforme
-            txn = WalletTransaction(
-                livreur_id=livreur.id,
-                type="commission",
-                montant=commande.commission_plateforme,
-                solde_avant=solde_avant,
-                solde_apres=livreur.solde_disponible,
-                description=f"Commission course #{commande.numero_commande} (Espèces)",
-                commande_id=commande.id,
-                statut="complete",
-            )
-            db.add(txn)
+        # CASH : le livreur a été réglé en espèces directement par l'expéditeur, et la
+        # commission a déjà été prélevée sur le Crédit de l'expéditeur à la création de
+        # la course. Rien à débiter côté livreur — plus de dette, plus de solde négatif.
         
         # Vérifier s'il reste d'autres courses actives
         other_active_query = select(func.count()).where(
@@ -690,10 +687,21 @@ async def annuler_commande(
                 livreur.is_en_course = False
                 livreur.is_disponible = True
     
+    # Rembourser la commission réservée sur le Crédit de l'expéditeur (courses CASH).
+    if commande.mode_paiement == ModePaiement.CASH and commande.commission_plateforme:
+        try:
+            await credit_service.rembourser_commission(
+                db, commande.partenaire_id, commande.commission_plateforme,
+                commande_id=commande.id,
+                description=f"Remboursement course annulée #{commande.numero_commande}",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Remboursement Crédit échoué (course %s): %s", commande.id, e)
+
     commande.status = CommandeStatus.ANNULEE
     commande.annulee_at = datetime.now(timezone.utc)
     commande.raison_annulation = annulation.raison
-    
+
     await db.commit()
     await db.refresh(commande)
     

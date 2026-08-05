@@ -11,8 +11,11 @@ from ....models.partenaire import Partenaire, TypePartenaire
 from ....models.livreur import Livreur
 from ....models.commande import Commande, CommandeStatus
 from ....models.wallet_transaction import WalletTransaction
+from ....models.credit_transaction import CreditTransaction
 from ....utils.dependencies import get_current_admin
 from ....services.notification_service import notification_service
+from ....services import credit_service
+from ....services.soldes import MontantInvalide
 
 router = APIRouter()
 
@@ -980,3 +983,80 @@ async def supprimer_user(
     await db.delete(user)
     await db.commit()
     return {"message": "Utilisateur supprimé définitivement"}
+
+
+# ── Crédit expéditeur (gestion admin) ─────────────────────────────────────────
+
+class CreditManuelRequest(BaseModel):
+    montant: float = Field(..., gt=0, description="Montant à créditer (GNF)")
+    motif: Optional[str] = Field(None, max_length=255, description="Raison du crédit manuel")
+
+
+@router.post("/partenaires/{partenaire_id}/credit", status_code=status.HTTP_201_CREATED)
+async def crediter_partenaire(
+    partenaire_id: str,
+    body: CreditManuelRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Créditer manuellement le Crédit d'un expéditeur (correction, geste commercial,
+    confirmation Mobile Money hors PSP)."""
+    p = (await db.execute(
+        select(Partenaire).where(Partenaire.id == partenaire_id)
+    )).scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expéditeur introuvable")
+
+    try:
+        txn = await credit_service.crediter_admin(db, partenaire_id, body.montant, motif=body.motif)
+    except MontantInvalide as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return {
+        "message": "Crédit ajouté",
+        "montant_credite": body.montant,
+        "credit_solde": txn.solde_apres,
+        "transaction_id": str(txn.id),
+    }
+
+
+@router.get("/partenaires/{partenaire_id}/credit")
+async def get_partenaire_credit(
+    partenaire_id: str,
+    limit: int = 30,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Solde de Crédit d'un expéditeur + derniers mouvements (supervision)."""
+    p = (await db.execute(
+        select(Partenaire).where(Partenaire.id == partenaire_id)
+    )).scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expéditeur introuvable")
+
+    txns = (await db.execute(
+        select(CreditTransaction)
+        .where(CreditTransaction.partenaire_id == p.id)
+        .order_by(CreditTransaction.created_at.desc())
+        .limit(min(limit, 200))
+    )).scalars().all()
+
+    return {
+        "partenaire_id": str(p.id),
+        "nom": p.nom,
+        "credit_solde": round(p.credit_solde or 0.0, 2),
+        "transactions": [
+            {
+                "id": str(t.id),
+                "type": t.type,
+                "montant": t.montant,
+                "solde_avant": t.solde_avant,
+                "solde_apres": t.solde_apres,
+                "description": t.description,
+                "commande_id": str(t.commande_id) if t.commande_id else None,
+                "statut": t.statut,
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in txns
+        ],
+    }

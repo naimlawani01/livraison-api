@@ -22,7 +22,8 @@ from ....models.commande import Commande, CommandeStatus, ModePaiement
 from ....models.livreur import Livreur
 from ....models.partenaire import Partenaire
 from ....models.wallet_transaction import WalletTransaction
-from ....services import genius_pay_service
+from ....models.credit_transaction import CreditTransaction
+from ....services import genius_pay_service, credit_service
 from ....services.genius_pay_service import GeniusPayError
 from ....services.matching_service import MatchingService
 from ....utils.dependencies import get_current_partenaire
@@ -139,6 +140,39 @@ async def webhook_geniuspay(
 
     # ── payment.success ──────────────────────────────────────────────────────
     if event == "payment.success":
+        # Cas 1 : recharge du Crédit d'un expéditeur (pas de commande liée)
+        if metadata.get("type") == "credit_recharge":
+            partenaire_id = metadata.get("partenaire_id")
+            reference = data.get("reference")
+            montant = data.get("amount") or metadata.get("montant")
+            if not partenaire_id or not montant:
+                logger.error("credit_recharge — partenaire_id/montant manquant (ref=%s)", reference)
+                return {"ok": False, "reason": "missing_credit_fields"}
+
+            # Idempotence : recharge déjà appliquée pour cette référence ?
+            if reference:
+                dup = await db.execute(
+                    select(CreditTransaction).where(
+                        CreditTransaction.geniuspay_reference == reference
+                    )
+                )
+                if dup.scalar_one_or_none():
+                    logger.info("credit_recharge — ref %s déjà appliquée, skip", reference)
+                    return {"ok": True}
+
+            try:
+                await credit_service.recharger(
+                    db, partenaire_id, float(montant),
+                    description="Recharge Mobile Money",
+                    geniuspay_reference=reference,
+                )
+                logger.info("credit_recharge — Crédit +%s GNF (partenaire=%s)", montant, partenaire_id)
+            except Exception as e:  # noqa: BLE001
+                logger.error("credit_recharge — échec application: %s", e)
+                return {"ok": False, "reason": "credit_apply_failed"}
+            return {"ok": True}
+
+        # Cas 2 : paiement d'une course Mobile Money
         commande_id = metadata.get("commande_id")
         if not commande_id:
             logger.error("payment.success sans commande_id dans metadata")

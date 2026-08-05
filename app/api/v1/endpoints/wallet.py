@@ -51,14 +51,6 @@ class RetraitRequest(BaseModel):
     _normalize_phone = field_validator("numero_telephone")(lambda cls, v: _validate_guinea_phone(v))
 
 
-class RechargeRequest(BaseModel):
-    montant: float = Field(..., gt=0)
-    methode: str = Field(..., description="orange_money | mtn_money | wave")
-    numero_telephone: str = Field(..., description="Numéro guinéen +224XXXXXXXXX")
-    reference_transaction: str = Field(..., min_length=3, description="Référence de la transaction Mobile Money")
-
-    _normalize_phone = field_validator("numero_telephone")(lambda cls, v: _validate_guinea_phone(v))
-
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/me/wallet", response_model=WalletSummary)
@@ -118,42 +110,9 @@ async def get_transactions(
     }
 
 
-@router.post("/me/wallet/recharge", status_code=status.HTTP_201_CREATED)
-async def demander_recharge(
-    body: RechargeRequest,
-    livreur: Livreur = Depends(get_current_livreur),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Recharge du wallet via Mobile Money.
-    Le livreur soumet la référence de sa transaction — un admin valide ensuite.
-    Le solde n'est crédité qu'après validation.
-    """
-    montant_min = 5_000
-    if body.montant < montant_min:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Montant minimum de recharge : {montant_min} GNF",
-        )
-
-    txn = WalletTransaction(
-        livreur_id=livreur.id,
-        type="recharge",
-        montant=body.montant,
-        solde_avant=livreur.solde_disponible,
-        solde_apres=livreur.solde_disponible,  # inchangé jusqu'à validation admin
-        description=f"Recharge {body.methode} — réf. {body.reference_transaction} — {body.numero_telephone}",
-        statut="en_attente",
-    )
-    db.add(txn)
-    await db.commit()
-
-    return {
-        "message": "Demande de recharge enregistrée. En attente de validation.",
-        "montant": body.montant,
-        "transaction_id": str(txn.id),
-        "statut": "en_attente",
-    }
+# Note : la recharge du wallet livreur a été retirée. Dans le nouveau modèle, le
+# livreur ne met jamais d'argent — ses Gains ne font que monter (courses plateforme,
+# indemnités) et se retirer. C'est l'expéditeur qui recharge son Crédit (cf. credit.py).
 
 
 @router.post("/me/wallet/retrait", status_code=status.HTTP_201_CREATED)

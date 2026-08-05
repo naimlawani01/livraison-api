@@ -2,6 +2,8 @@ from .user import User, UserRole
 from .livreur import Livreur
 from .partenaire import Partenaire, TypePartenaire
 from .commande import Commande, CommandeStatus
+from .wallet_transaction import WalletTransaction
+from .credit_transaction import CreditTransaction
 
 __all__ = [
     "User",
@@ -10,5 +12,7 @@ __all__ = [
     "Partenaire",
     "TypePartenaire",
     "Commande",
-    "CommandeStatus"
+    "CommandeStatus",
+    "WalletTransaction",
+    "CreditTransaction",
 ]

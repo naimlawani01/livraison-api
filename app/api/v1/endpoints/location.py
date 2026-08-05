@@ -157,16 +157,24 @@ async def submit_location(
             (partenaire.latitude, partenaire.longitude),
             (data.latitude, data.longitude),
         )
-        # Import ici pour éviter import circulaire avec commandes.py
-        from .commandes import calculer_prix
-        prix_final = calculer_prix(distance_km, commande.nature_colis or "standard")
-        commission, montant_livreur = MatchingService.calculer_commission(prix_final)
+        from ....services import pricing, credit_service
+        ancienne_commission = commande.commission_plateforme or 0.0
+        tarif = pricing.calculer_tarif(distance_km, commande.nature_colis or "standard")
 
         commande.distance_km = distance_km
         commande.duree_estimee_minutes = GeolocationService.estimer_duree_trajet(distance_km)
-        commande.prix_propose = prix_final
-        commande.commission_plateforme = commission
-        commande.montant_livreur = montant_livreur
+        commande.prix_propose = tarif.prix
+        commande.commission_plateforme = tarif.commission
+        commande.montant_livreur = tarif.gain_livreur
+        await db.flush()
+
+        # Ajuster le Crédit de l'expéditeur du delta de commission (courses CASH,
+        # dont la commission a été réservée au plancher à la création).
+        if commande.mode_paiement == ModePaiement.CASH:
+            await credit_service.ajuster_commission(
+                db, commande.partenaire_id, ancienne_commission, tarif.commission,
+                commande_id=commande.id,
+            )
 
     await db.commit()
     await db.refresh(commande)

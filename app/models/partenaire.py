@@ -49,6 +49,11 @@ class Partenaire(Base):
     # Notation
     note_moyenne = Column(Float, default=0.0)
     nombre_evaluations = Column(Integer, default=0)
+
+    # Crédit prépayé — couvre les commissions plateforme (nouveau modèle).
+    # Se dépense à chaque course, se recharge via PSP. Ne passe jamais sous zéro
+    # (garde-fou : cf. app/services/soldes.py). Journal : credit_transactions.
+    credit_solde = Column(Float, default=0.0, nullable=False)
     
     # Consentement légal
     consent_accepted_at = Column(DateTime, nullable=True)

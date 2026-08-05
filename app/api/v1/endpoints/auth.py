@@ -210,15 +210,21 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects"
         )
-    
-    # Vérifier le mot de passe si fourni
-    if login_data.password:
-        if not user.password_hash or not verify_password(login_data.password, user.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Identifiants incorrects"
-            )
-    
+
+    # Le mot de passe est OBLIGATOIRE. Un password absent ou un compte sans
+    # hash ne doit jamais ouvrir de session (sinon n'importe qui connaissant
+    # un numéro vérifié obtiendrait des tokens). Erreur générique pour ne pas
+    # révéler quels numéros sont enregistrés.
+    if (
+        not login_data.password
+        or not user.password_hash
+        or not verify_password(login_data.password, user.password_hash)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Identifiants incorrects"
+        )
+
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -1,0 +1,5 @@
+# Outils de test — NON requis en production (ne pas installer sur Railway).
+# Installation locale : pip install -r requirements-dev.txt
+pytest==8.3.4
+pytest-asyncio==0.24.0
+aiosqlite==0.20.0        # base SQLite async pour les futurs tests DB (Crédit / Gains)

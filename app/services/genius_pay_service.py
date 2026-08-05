@@ -41,13 +41,14 @@ def _payout_headers() -> dict:
 
 async def initier_paiement(
     *,
-    commande_id: str,
-    partenaire_id: str,
+    commande_id: Optional[str] = None,
+    partenaire_id: Optional[str] = None,
     montant: float,
     description: str,
     nom_client: Optional[str] = None,
     success_url: Optional[str] = None,
     error_url: Optional[str] = None,
+    metadata: Optional[dict] = None,
 ) -> dict:
     """
     Crée une transaction GeniusPay et retourne:
@@ -61,13 +62,18 @@ async def initier_paiement(
       - Le provider Mobile Money (Orange, MTN, …) est détecté
         automatiquement à partir du numéro saisi et du pays
     """
+    meta: dict = {}
+    if commande_id:
+        meta["commande_id"] = commande_id
+    if partenaire_id:
+        meta["partenaire_id"] = partenaire_id
+    if metadata:
+        meta.update(metadata)
+
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
         "description": description[:500],
-        "metadata": {
-            "commande_id": commande_id,
-            "partenaire_id": partenaire_id,
-        },
+        "metadata": meta,
     }
     # Notes :
     # - "currency" : GeniusPay accepte seulement XOF/EUR/USD, GNF non listé.

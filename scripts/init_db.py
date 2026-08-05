@@ -14,34 +14,46 @@ from app.core.security import get_password_hash
 
 
 async def create_admin_user():
-    """Créer un utilisateur admin par défaut"""
+    """Créer l'utilisateur admin à partir des variables d'environnement.
+
+    SÉCURITÉ : aucun compte admin par défaut n'est créé. Le numéro et le mot
+    de passe DOIVENT être fournis via `ADMIN_PHONE` et `ADMIN_PASSWORD`
+    (ex: variables Railway). Sans ces variables, l'étape est ignorée — on
+    ne crée jamais d'admin avec des identifiants devinables.
+    """
+    admin_phone = os.getenv("ADMIN_PHONE")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+
+    if not admin_phone or not admin_password:
+        print("ℹ️  ADMIN_PHONE / ADMIN_PASSWORD non définis — création admin ignorée")
+        return
+
+    if len(admin_password) < 12:
+        print("⛔ ADMIN_PASSWORD trop court (min 12 caractères) — création admin annulée")
+        return
+
     async with async_session_maker() as session:
-        # Vérifier si admin existe déjà
         from sqlalchemy import select
-        query = select(User).where(User.phone == "00000000")
+        query = select(User).where(User.phone == admin_phone)
         result = await session.execute(query)
         existing_admin = result.scalar_one_or_none()
-        
+
         if existing_admin:
             print("✅ Admin user already exists")
             return
-        
-        # Créer l'admin
+
         admin = User(
-            phone="00000000",  # Numéro fictif pour admin
-            password_hash=get_password_hash("admin123"),
+            phone=admin_phone,
+            password_hash=get_password_hash(admin_password),
             role=UserRole.ADMIN,
             is_active=True,
             is_verified=True
         )
-        
+
         session.add(admin)
         await session.commit()
-        
-        print("✅ Admin user created successfully")
-        print("   Phone: 00000000")
-        print("   Password: admin123")
-        print("   ⚠️  CHANGE THE PASSWORD IN PRODUCTION!")
+
+        print(f"✅ Admin user created successfully (phone: {admin_phone})")
 
 
 async def main():

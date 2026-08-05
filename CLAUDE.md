@@ -19,6 +19,17 @@ This directory contains the main API for the Sonaiyaa project.
 - **Create a migration**: `alembic revision --autogenerate -m "description"`
 - **Apply migrations**: `alembic upgrade head`
 - **Virtual Environment**: Activate via `source ../.venv/bin/activate` (or similar depending on your local python env setup).
+- **Run tests**: `pip install -r requirements-dev.txt` then `python -m pytest`. Les tests d'intégration DB tournent sur SQLite par défaut (aucun setup) ; définir `DATABASE_TEST_URL` vers un Postgres de test pour valider les verrous `FOR UPDATE` réels.
+
+## ⚠️ Migration en cours — Modèle Crédit / Gains (nouveau modèle économique)
+> **Glossaire code ↔ produit** (on ne renomme PAS le code) : `partenaire` (code/DB) = **Expéditeur** (produit, inclut restaurants/commerces/vendeurs/particuliers) · `commande` = **Course** · `wallet`/`solde_disponible` (livreur) = **Gains** · nouveau `credit_solde` (partenaire) = **Crédit**. Les libellés utilisateurs utilisent le vocabulaire produit ; le code garde ses noms.
+
+Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Gains livreur**. État actuel :
+- **Commission = 12 %** (était 15 %). Source de vérité unique : `app/services/pricing.py` (`calculer_tarif` : plancher 10 000 + 1 500/km, colis simplifié standard/fragile/volumineux, **sans surge horaire**).
+- **Crédit (expéditeur)** : solde prépayé `partenaires.credit_solde` + journal `credit_transactions` (migration `018`). Se recharge via PSP (`POST /partenaires/me/credit/recharge` → webhook `payment.success` type `credit_recharge`). La **commission d'une course cash est débitée du Crédit à la création** (garde-fou : Crédit insuffisant → 400, rien créé), remboursée à l'annulation, ajustée au partage GPS.
+- **Gains (livreur)** : `livreur.solde_disponible` devient **positif uniquement** (courses Mobile Money + indemnités), retiré via `POST /livreurs/me/wallet/retrait`. **Plus de recharge ni de dette** côté livreur (course cash = payé cash par l'expéditeur, aucune écriture livreur).
+- Règles d'argent pures et testées dans `app/services/soldes.py` (le Crédit ne passe jamais sous zéro, les Gains restent positifs) ; service transactionnel `app/services/credit_service.py` (verrou `with_for_update`).
+- **Restant** : renommage `partenaire→expediteur` / `commande→course` ; fix payload **GNF** GeniusPay (cf. mémoire) ; endpoints admin Crédit ; apps mobiles.
 
 ## Key Environment Variables
 - `SECRET_KEY` — JWT signing secret
@@ -30,6 +41,7 @@ This directory contains the main API for the Sonaiyaa project.
 - `GENIUSPAY_API_KEY`, `GENIUSPAY_API_SECRET`, `GENIUSPAY_WEBHOOK_SECRET`, `GENIUSPAY_BASE_URL`, `GENIUSPAY_WALLET_ID` — Payment gateway
 - `PASSEINFO_API_KEY`, `PASSEINFO_CLIENT_ID`, `PASSEINFO_SENDER_NAME` — PasseInfo SMS OTP
 - `FIREBASE_CREDENTIALS` (inline JSON) or `FIREBASE_CREDENTIALS_PATH` — Push notifications
+- `ADMIN_PHONE`, `ADMIN_PASSWORD` — **Required** to seed the admin account via `scripts/init_db.py`. No default admin is created without them (password min 12 chars). Never hardcode admin credentials.
 - `MAX_COURSES_SIMULTANEES` (default: 2) — Max parallel deliveries per driver
 - `DEFAULT_SEARCH_RADIUS_KM`, `MAX_SEARCH_RADIUS_KM`, `MIN_SEARCH_RADIUS_KM` — Geolocation for driver matching
 - `SENTRY_DSN` — Optionnel. Si renseigné, Sentry capture les exceptions FastAPI + SQLAlchemy. Laisser vide pour désactiver. `send_default_pii=False` est forcé (évite de fuiter password/OTP).
@@ -66,7 +78,7 @@ This directory contains the main API for the Sonaiyaa project.
   - `admin/stats` endpoint caches its result 60s in Redis (key `admin:stats:v1`). Avoids 11 aggregation queries per dashboard refresh. Graceful degradation if Redis is down (calculates fresh).
   - `storage_service.presigned_url_cached(key, expires_in)` — async wrapper around `presigned_url()` with Redis cache (90% of TTL). Use it in admin endpoints that serve doc URLs to avoid re-signing on every read. Currently the codebase exposes R2 documents via direct public URLs (`r.piece_identite_url`, `r.devanture_url`), but when migrating to private buckets + presigned URLs, switch admin endpoints to `await storage_service.presigned_url_cached(key)`.
 - **Pagination admin**: `GET /admin/livreurs/tous`, `/admin/partenaires/tous`, and `/admin/users` all support `?limit=` (cap 200 default, max 500) and `?offset=`. The admin-web UI ignores these by default but should start passing them once the lists grow beyond a few hundred rows.
-- **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_partenaire` dependencies (from `app/api/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS.
+- **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_partenaire` dependencies (from `app/utils/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS. `POST /auth/login` (phone + password) **requires a non-empty password** — never make it optional (an absent password must return 401, otherwise anyone knowing a verified phone gets tokens).
 - **State Machine**: Order statuses must strictly follow the flow defined in the `TRANSITIONS_VALIDES` dictionary (in `app/api/v1/endpoints/commandes.py`). No wild/unauthorized transitions.
 - **WebSockets**: The WS connection requires the JWT token as a query parameter `?token=xxx`. The `ConnectionManager` uses Redis Pub/Sub for broadcasting across multiple workers.
 - **Pagination**: Queries listing orders use pagination returning a dictionary: `{ "total": N, "page": P, "pages": X, "commandes": [...] }`.
