@@ -45,7 +45,7 @@ class StorageService:
     ) -> str:
         """
         Upload un fichier dans R2 et retourne l'URL publique.
-        folder : ex. "livreurs" ou "partenaires"
+        folder : ex. "livreurs" ou "expediteurs"
         """
         if not self._client:
             raise RuntimeError("R2 non configuré — ajoutez R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY dans les variables d'environnement")

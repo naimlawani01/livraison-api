@@ -40,17 +40,17 @@ async def session():
 
 async def _creer_expediteur(session, credit=0.0):
     from app.models.user import User, UserRole
-    from app.models.partenaire import Partenaire
+    from app.models.expediteur import Expediteur
 
     user = User(
         id=uuid.uuid4(),
         phone=f"+224600{uuid.uuid4().int % 1000000:06d}",
-        role=UserRole.PARTENAIRE,
+        role=UserRole.EXPEDITEUR,
         is_verified=True,
     )
     session.add(user)
     await session.flush()
-    p = Partenaire(
+    p = Expediteur(
         id=uuid.uuid4(), user_id=user.id, nom="Test", adresse="Conakry",
         latitude=9.5, longitude=-13.7, credit_solde=credit,
     )
@@ -138,7 +138,7 @@ class TestCycleComplet:
         await credit_service.recharger(session, p.id, 10_000)
         await credit_service.debiter_commission(session, p.id, 1_200)
         n = (await session.execute(
-            select(func.count()).where(CreditTransaction.partenaire_id == p.id)
+            select(func.count()).where(CreditTransaction.expediteur_id == p.id)
         )).scalar()
         assert n == 2  # 1 recharge + 1 commission
 

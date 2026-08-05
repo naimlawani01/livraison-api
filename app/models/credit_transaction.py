@@ -6,7 +6,7 @@ from ..core.database import Base
 
 
 class CreditTransaction(Base):
-    """Journal du Crédit d'un expéditeur (côté partenaire).
+    """Journal du Crédit d'un expéditeur (côté expediteur).
 
     Miroir de WalletTransaction, mais pour le Crédit prépayé de l'expéditeur :
       - type 'recharge'   : entrée (PSP) — augmente le Crédit
@@ -19,11 +19,11 @@ class CreditTransaction(Base):
 
     # Accélère l'historique d'un expéditeur trié par date desc.
     __table_args__ = (
-        Index("ix_credit_transactions_partenaire_created", "partenaire_id", "created_at"),
+        Index("ix_credit_transactions_expediteur_created", "expediteur_id", "created_at"),
     )
 
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    partenaire_id = Column(UUID(as_uuid=True), ForeignKey("partenaires.id", ondelete="CASCADE"), nullable=False)
+    expediteur_id = Column(UUID(as_uuid=True), ForeignKey("expediteurs.id", ondelete="CASCADE"), nullable=False)
     type          = Column(String(20), nullable=False)   # recharge | commission
     montant       = Column(Float, nullable=False)
     solde_avant   = Column(Float, nullable=False)

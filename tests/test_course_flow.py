@@ -51,16 +51,16 @@ def _stub_sms(monkeypatch):
 
 async def _creer_expediteur(session, credit=0.0):
     from app.models.user import User, UserRole
-    from app.models.partenaire import Partenaire
+    from app.models.expediteur import Expediteur
     user = User(
         id=uuid.uuid4(),
         phone=f"+224600{uuid.uuid4().int % 1000000:06d}",
-        role=UserRole.PARTENAIRE,
+        role=UserRole.EXPEDITEUR,
         is_verified=True,
     )
     session.add(user)
     await session.flush()
-    p = Partenaire(
+    p = Expediteur(
         id=uuid.uuid4(), user_id=user.id, nom="Test", adresse="Conakry",
         latitude=9.5, longitude=-13.7, credit_solde=credit, is_verified=True,
     )

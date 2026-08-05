@@ -111,13 +111,13 @@ class NotificationService:
         self,
         device_tokens: List[str],
         numero_commande: str,
-        partenaire_nom: str,
+        expediteur_nom: str,
         prix: float,
         distance_km: float
     ):
         """Notifier les livreurs d'une nouvelle commande disponible"""
         titre = f"Nouvelle course — {prix:.0f} FCFA"
-        msg = f"{partenaire_nom} · à {distance_km:.1f} km"
+        msg = f"{expediteur_nom} · à {distance_km:.1f} km"
         data = {"type": "nouvelle_commande", "numero_commande": numero_commande}
 
         count = await self.envoyer_a_plusieurs(device_tokens, titre, msg, data)
@@ -129,7 +129,7 @@ class NotificationService:
         livreur_nom: str,
         numero_commande: str
     ):
-        """Notifier le partenaire que sa commande a été acceptée"""
+        """Notifier le expediteur que sa commande a été acceptée"""
         titre = "Course acceptée"
         msg = f"{livreur_nom} a accepté la course #{numero_commande}"
         data = {"type": "commande_acceptee", "numero_commande": numero_commande}

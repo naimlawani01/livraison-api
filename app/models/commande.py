@@ -35,7 +35,7 @@ class Commande(Base):
     # Ces indexes accélèrent les queries fréquentes filtrant sur plusieurs
     # colonnes à la fois.
     __table_args__ = (
-        Index("ix_commandes_partenaire_status", "partenaire_id", "status"),
+        Index("ix_commandes_expediteur_status", "expediteur_id", "status"),
         Index("ix_commandes_livreur_status", "livreur_id", "status"),
         Index("ix_commandes_status_created", "status", "created_at"),
     )
@@ -44,7 +44,7 @@ class Commande(Base):
     numero_commande = Column(String(50), unique=True, nullable=False, index=True)
     
     # Relations
-    partenaire_id = Column(UUID(as_uuid=True), ForeignKey("partenaires.id", ondelete="CASCADE"), nullable=False)
+    expediteur_id = Column(UUID(as_uuid=True), ForeignKey("expediteurs.id", ondelete="CASCADE"), nullable=False)
     livreur_id = Column(UUID(as_uuid=True), ForeignKey("livreurs.id", ondelete="SET NULL"), nullable=True)
     
     # Informations de livraison
@@ -110,7 +110,7 @@ class Commande(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Relations
-    partenaire = relationship("Partenaire", back_populates="commandes")
+    expediteur = relationship("Expediteur", back_populates="commandes")
     livreur = relationship("Livreur", back_populates="commandes")
     
     def __repr__(self):

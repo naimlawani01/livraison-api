@@ -47,12 +47,12 @@ def _payout_headers() -> dict:
     }
 
 
-# ── 1. Initier un paiement (collecte partenaire) ─────────────────────────────
+# ── 1. Initier un paiement (collecte expediteur) ─────────────────────────────
 
 async def initier_paiement(
     *,
     commande_id: Optional[str] = None,
-    partenaire_id: Optional[str] = None,
+    expediteur_id: Optional[str] = None,
     montant: float,
     description: str,
     nom_client: Optional[str] = None,
@@ -75,8 +75,8 @@ async def initier_paiement(
     meta: dict = {}
     if commande_id:
         meta["commande_id"] = commande_id
-    if partenaire_id:
-        meta["partenaire_id"] = partenaire_id
+    if expediteur_id:
+        meta["expediteur_id"] = expediteur_id
     if metadata:
         meta.update(metadata)
 

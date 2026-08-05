@@ -201,21 +201,21 @@ async def update_disponibilite(
                 result = await db.execute(
                     select(Commande)
                     .where(Commande.status == CommandeStatus.DIFFUSEE)
-                    .options(selectinload(Commande.partenaire))
+                    .options(selectinload(Commande.expediteur))
                 )
                 courses_en_attente = result.scalars().all()
                 pos_livreur = (livreur.latitude, livreur.longitude)
                 rayon = settings.MAX_SEARCH_RADIUS_KM
 
                 for commande in courses_en_attente:
-                    p = commande.partenaire
+                    p = commande.expediteur
                     if p and p.latitude and p.longitude:
                         dist = haversine(pos_livreur, (p.latitude, p.longitude))
                         if dist <= rayon:
                             await notification_service.notifier_nouvelle_commande(
                                 device_tokens=[livreur.device_token],
                                 numero_commande=commande.numero_commande,
-                                partenaire_nom=p.nom,
+                                expediteur_nom=p.nom,
                                 prix=commande.prix_propose or 0,
                                 distance_km=round(dist, 1),
                             )

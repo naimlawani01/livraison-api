@@ -6,7 +6,7 @@ from typing import Optional
 from ..core.database import get_db
 from ..core.security import decode_token, is_token_blacklisted
 from ..models.user import User, UserRole
-from ..models.partenaire import Partenaire
+from ..models.expediteur import Expediteur
 from ..models.livreur import Livreur
 
 security = HTTPBearer()
@@ -61,28 +61,28 @@ async def get_current_user(
     return user
 
 
-async def get_current_partenaire(
+async def get_current_expediteur(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
-) -> Partenaire:
-    """Récupérer le partenaire courant"""
-    if current_user.role != UserRole.PARTENAIRE:
+) -> Expediteur:
+    """Récupérer le expediteur courant"""
+    if current_user.role != UserRole.EXPEDITEUR:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Accès réservé aux partenaires"
+            detail="Accès réservé aux expediteurs"
         )
     
-    query = select(Partenaire).where(Partenaire.user_id == current_user.id)
+    query = select(Expediteur).where(Expediteur.user_id == current_user.id)
     result = await db.execute(query)
-    partenaire = result.scalar_one_or_none()
+    expediteur = result.scalar_one_or_none()
     
-    if not partenaire:
+    if not expediteur:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partenaire non trouvé"
+            detail="Expediteur non trouvé"
         )
     
-    return partenaire
+    return expediteur
 
 
 async def get_current_livreur(

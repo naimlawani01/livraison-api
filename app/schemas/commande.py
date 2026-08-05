@@ -59,7 +59,7 @@ class CommandeResponse(CommandeBase):
     """Réponse commande"""
     id: UUID
     numero_commande: str
-    partenaire_id: UUID
+    expediteur_id: UUID
     livreur_id: Optional[UUID]
     latitude_client: Optional[float]
     longitude_client: Optional[float]
@@ -92,14 +92,14 @@ class CommandeResponse(CommandeBase):
 
 
 class CommandeWithDetails(CommandeResponse):
-    """Commande avec détails partenaire et livreur"""
-    partenaire: Optional[dict] = None
+    """Commande avec détails expediteur et livreur"""
+    expediteur: Optional[dict] = None
     livreur: Optional[dict] = None
     code_livraison: Optional[str] = None
 
 
-class PartenaireInfo(BaseModel):
-    """Infos partenaire pour les courses disponibles"""
+class ExpediteurInfo(BaseModel):
+    """Infos expediteur pour les courses disponibles"""
     id: UUID
     nom: str
     adresse: str
@@ -111,10 +111,10 @@ class PartenaireInfo(BaseModel):
 
 
 class CommandeDisponibleResponse(BaseModel):
-    """Commande disponible avec infos partenaire et distance depuis le livreur"""
+    """Commande disponible avec infos expediteur et distance depuis le livreur"""
     id: UUID
     numero_commande: str
-    partenaire_id: UUID
+    expediteur_id: UUID
     adresse_client: Optional[str] = None
     latitude_client: Optional[float] = None
     longitude_client: Optional[float] = None
@@ -133,13 +133,13 @@ class CommandeDisponibleResponse(BaseModel):
     paiement_confirme: Optional[str] = "non"
     exige_code_livraison: bool
     
-    # Infos partenaire
-    partenaire_nom: str
-    partenaire_adresse: str
-    partenaire_latitude: float
-    partenaire_longitude: float
+    # Infos expediteur
+    expediteur_nom: str
+    expediteur_adresse: str
+    expediteur_latitude: float
+    expediteur_longitude: float
     
-    # Distance livreur -> partenaire
+    # Distance livreur -> expediteur
     distance_livreur_km: Optional[float] = None
     duree_livreur_minutes: Optional[int] = None
     
