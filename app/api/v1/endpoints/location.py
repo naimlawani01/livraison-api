@@ -10,6 +10,7 @@ Flux :
 import html as _html
 import secrets
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
 from ....core.rate_limit import limiter

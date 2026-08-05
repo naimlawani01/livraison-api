@@ -1,0 +1,52 @@
+name: CI
+
+# Fait tourner lint + tests à chaque push et sur les PR vers main.
+# Objectif : ne jamais laisser partir en prod (Railway auto-déploie sur push
+# vers main) un code qui casse les tests. Voir README/CLAUDE.md pour brancher
+# ce check comme "required" (branch protection) et faire attendre Railway.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# Annule les runs obsolètes si on repush vite sur la même ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint & Tests
+    runs-on: ubuntu-latest
+
+    env:
+      # Les tests tournent sur SQLite (aucun Postgres/Redis requis).
+      SECRET_KEY: ci-test-secret-key-not-used-in-prod
+      ENVIRONMENT: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install ruff
+
+      - name: Lint (erreurs critiques uniquement)
+        # E9=syntaxe, F63/F7/F82=undefined/erreurs logiques — pas le style,
+        # pour ne pas bloquer sur des broutilles cosmétiques.
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Run tests
+        run: python -m pytest -q
