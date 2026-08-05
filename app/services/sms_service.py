@@ -87,7 +87,7 @@ class SMSService:
         telephone: str,
         nom_client: str,
         numero_commande: str,
-        partenaire_nom: str,
+        expediteur_nom: str,
         montant: float,
         tracking_url: str,
         checkout_url: Optional[str] = None,
@@ -106,15 +106,15 @@ class SMSService:
         prenom = nom_client.split()[0] if nom_client else "Bonjour"
 
         if position_required:
-            message = f"Livraison {partenaire_nom}. Partagez votre position : {tracking_url}"
+            message = f"Livraison {expediteur_nom}. Partagez votre position : {tracking_url}"
             return await self._send(telephone, message)
 
         montant_fmt = f"{int(montant):,}".replace(",", " ") + "GNF"
 
         if checkout_url:
-            message = f"Livraison {partenaire_nom} {montant_fmt}. Payer : {checkout_url}"
+            message = f"Livraison {expediteur_nom} {montant_fmt}. Payer : {checkout_url}"
         else:
-            message = f"Livraison {partenaire_nom} {montant_fmt}. Especes. Suivre : {tracking_url}"
+            message = f"Livraison {expediteur_nom} {montant_fmt}. Especes. Suivre : {tracking_url}"
 
         return await self._send(telephone, message)
 

@@ -18,7 +18,7 @@ from ....core.database import get_db
 from ....core.redis import redis_client
 from ....models.commande import Commande
 from ....models.livreur import Livreur
-from ....models.partenaire import Partenaire
+from ....models.expediteur import Expediteur
 from ....models.user import User
 from ....utils.dependencies import get_current_user
 
@@ -64,12 +64,12 @@ async def tracking_page(token: str, db: AsyncSession = Depends(get_db)):
     if not commande:
         return HTMLResponse(content=_error_html("Lien invalide ou expiré"), status_code=404)
 
-    partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-    partenaire_r = await db.execute(partenaire_q)
-    partenaire_row = partenaire_r.scalar_one_or_none()
-    partenaire_nom = partenaire_row.nom if partenaire_row else "Partenaire"
+    expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    expediteur_r = await db.execute(expediteur_q)
+    expediteur_row = expediteur_r.scalar_one_or_none()
+    expediteur_nom = expediteur_row.nom if expediteur_row else "Expediteur"
 
-    return HTMLResponse(content=_tracking_html(token, commande.numero_commande, partenaire_nom))
+    return HTMLResponse(content=_tracking_html(token, commande.numero_commande, expediteur_nom))
 
 
 # ── API JSON pour le polling ────────────────────────────
@@ -120,15 +120,15 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
                     "longitude": float(livreur.longitude),
                 }
 
-    # Position partenaire (point de départ)
-    partenaire_pos = None
-    partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-    partenaire_r = await db.execute(partenaire_q)
-    partenaire_row = partenaire_r.scalar_one_or_none()
-    if partenaire_row and partenaire_row.latitude and partenaire_row.longitude:
-        partenaire_pos = {
-            "latitude": float(partenaire_row.latitude),
-            "longitude": float(partenaire_row.longitude),
+    # Position expediteur (point de départ)
+    expediteur_pos = None
+    expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    expediteur_r = await db.execute(expediteur_q)
+    expediteur_row = expediteur_r.scalar_one_or_none()
+    if expediteur_row and expediteur_row.latitude and expediteur_row.longitude:
+        expediteur_pos = {
+            "latitude": float(expediteur_row.latitude),
+            "longitude": float(expediteur_row.longitude),
         }
 
     # Position client (point d'arrivée)
@@ -150,7 +150,7 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
         "livreur_photo": livreur_photo,
         "livreur_vehicule": livreur_vehicule,
         "livreur_note": livreur_note,
-        "partenaire_position": partenaire_pos,
+        "expediteur_position": expediteur_pos,
         "client_position": client_pos,
         "created_at": commande.created_at.isoformat() if commande.created_at else None,
         "acceptee_at": commande.acceptee_at.isoformat() if commande.acceptee_at else None,
@@ -162,16 +162,16 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 
 # ── HTML Templates ──────────────────────────────────────
 
-def _tracking_html(token: str, numero: str, partenaire: str) -> str:
+def _tracking_html(token: str, numero: str, expediteur: str) -> str:
     import json as _json
-    partenaire_js = _json.dumps(partenaire)
+    expediteur_js = _json.dumps(expediteur)
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0c0c0c">
-<title>Suivi de votre livraison • {partenaire}</title>
+<title>Suivi de votre livraison • {expediteur}</title>
 <meta property="og:title" content="Suivi en direct de votre livraison">
 <meta property="og:description" content="Suivez votre livreur en temps réel sur la carte. Sönaiyaa.">
 <meta property="og:type" content="website">
@@ -315,7 +315,7 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
   .marker-fixed {{
     width: 36px; height: 36px; font-size: 16px;
   }}
-  .marker-partenaire {{ background: #111827; color: #fff; }}
+  .marker-expediteur {{ background: #111827; color: #fff; }}
   .marker-client {{ background: var(--green); color: #fff; }}
   @keyframes pulseRing {{
     0% {{ box-shadow: 0 0 0 0 rgba(255,90,31,0.55); }}
@@ -523,7 +523,7 @@ def _tracking_html(token: str, numero: str, partenaire: str) -> str:
     <div class="eta-content">
       <div class="eta-label" id="etaLabel">Préparation</div>
       <div class="eta-value" id="etaValue">Votre livreur arrive bientôt</div>
-      <div class="eta-sub" id="etaSub">Commande chez {partenaire}</div>
+      <div class="eta-sub" id="etaSub">Commande chez {expediteur}</div>
     </div>
   </div>
 
@@ -570,7 +570,7 @@ const MOTO_KMH = 25; // vitesse moyenne en ville
 // État
 let map = null;
 let livreurMarker = null;
-let partenaireMarker = null;
+let expediteurMarker = null;
 let clientMarker = null;
 let routeLine = null;
 let mapReady = false;
@@ -579,9 +579,9 @@ let livreurDisplayPos = null;  // position interpolée affichée
 let animationFrameId = null;
 
 const STATUS_CONFIG = {{
-  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Commande reçue',           desc: 'Le partenaire prépare votre commande' }},
+  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Commande reçue',           desc: 'Le expediteur prépare votre commande' }},
   DIFFUSEE:        {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'À la recherche d\\'un livreur', desc: 'Nous cherchons le livreur le plus proche' }},
-  ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers le partenaire' }},
+  ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers le expediteur' }},
   EN_RECUPERATION: {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur sur place',        desc: 'Récupération en cours' }},
   EN_LIVRAISON:    {{ pip: 2, icon: '🚀', label: 'En chemin',        title: 'En route vers vous',       desc: 'Le livreur arrive !' }},
   TERMINEE:        {{ pip: 3, icon: '🎉', label: 'Livré',            title: 'Livraison terminée',       desc: '' }},
@@ -653,7 +653,7 @@ function smoothMoveLivreur() {{
 
 function updateMap(data, vehiculeEmoji) {{
   const liv = data.livreur_position;
-  const part = data.partenaire_position;
+  const part = data.expediteur_position;
   const cli = data.client_position;
   const isFinished = data.status === 'TERMINEE' || data.status === 'ANNULEE';
 
@@ -673,9 +673,9 @@ function updateMap(data, vehiculeEmoji) {{
 
   ensureMap();
 
-  if (part && !partenaireMarker) {{
-    partenaireMarker = L.marker([part.latitude, part.longitude], {{
-      icon: makeIcon('marker-fixed marker-partenaire', '🏪'),
+  if (part && !expediteurMarker) {{
+    expediteurMarker = L.marker([part.latitude, part.longitude], {{
+      icon: makeIcon('marker-fixed marker-expediteur', '🏪'),
     }}).addTo(map);
   }}
 
@@ -741,7 +741,7 @@ function updateMap(data, vehiculeEmoji) {{
 // ── ETA & UI ──
 function computeEta(data) {{
   const liv = data.livreur_position;
-  const dest = (data.status === 'EN_LIVRAISON') ? data.client_position : data.partenaire_position;
+  const dest = (data.status === 'EN_LIVRAISON') ? data.client_position : data.expediteur_position;
   if (!liv || !dest) return null;
   const km = haversineKm(liv, dest);
   return {{ km, eta: formatEta(km), distance: formatDistance(km) }};
@@ -757,14 +757,14 @@ function updateEtaHero(data, vehiculeEmoji) {{
   if (data.status === 'EN_LIVRAISON' || data.status === 'ACCEPTEE' || data.status === 'EN_RECUPERATION') {{
     const e = computeEta(data);
     if (e) {{
-      const dest = (data.status === 'EN_LIVRAISON') ? 'chez vous' : 'chez le partenaire';
+      const dest = (data.status === 'EN_LIVRAISON') ? 'chez vous' : 'chez le expediteur';
       document.getElementById('etaValue').textContent = 'Arrivée dans ~' + e.eta;
       document.getElementById('etaSub').textContent = 'Le livreur est à ' + e.distance + ' — ' + dest;
       return;
     }}
   }}
   document.getElementById('etaValue').textContent = cfg.title;
-  document.getElementById('etaSub').textContent = cfg.desc || ('Commande chez ' + {partenaire_js});
+  document.getElementById('etaSub').textContent = cfg.desc || ('Commande chez ' + {expediteur_js});
 }}
 
 function updateStepper(data) {{
@@ -816,7 +816,7 @@ function updateFinalBanner(data) {{
   const b = document.getElementById('finalBanner');
   if (data.status === 'ANNULEE') {{
     b.className = 'final-banner cancelled';
-    b.innerHTML = '<div class="big">❌</div><div class="label">Commande annulée</div><div class="sub">Contactez le partenaire pour plus d\\'informations</div>';
+    b.innerHTML = '<div class="big">❌</div><div class="label">Commande annulée</div><div class="sub">Contactez le expediteur pour plus d\\'informations</div>';
     document.getElementById('etaHero').style.display = 'none';
   }} else if (data.status === 'TERMINEE') {{
     b.className = 'final-banner delivered';
@@ -891,7 +891,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le partenaire.</p>
+  <p>Ce lien n'est plus valide. Contactez le expediteur.</p>
 </div>
 </body>
 </html>"""

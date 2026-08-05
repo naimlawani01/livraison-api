@@ -67,7 +67,7 @@ class LivreurResponse(LivreurBase):
 
 
 class LivreurPublicResponse(BaseModel):
-    """Réponse publique livreur (pour partenaires)"""
+    """Réponse publique livreur (pour expediteurs)"""
     id: UUID
     nom_complet: str
     note_moyenne: float

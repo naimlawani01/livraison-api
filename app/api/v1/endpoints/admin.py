@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from ....core.database import get_db
 from ....core.security import get_password_hash
 from ....models.user import User, UserRole
-from ....models.partenaire import Partenaire, TypePartenaire
+from ....models.expediteur import Expediteur, TypeExpediteur
 from ....models.livreur import Livreur
 from ....models.commande import Commande, CommandeStatus
 from ....models.wallet_transaction import WalletTransaction
@@ -32,10 +32,10 @@ TEST_ACCOUNT_PREFIX = "+224600"
 class TestAccountCreate(BaseModel):
     phone: str = Field(..., description="Doit commencer par +224600")
     password: str = Field(..., min_length=6)
-    role: Literal["PARTENAIRE", "LIVREUR"]
+    role: Literal["EXPEDITEUR", "LIVREUR"]
     nom: str = Field(..., min_length=1)
-    # Partenaire-only (defaults are fine for the Apple reviewer flow)
-    type_partenaire: Optional[str] = "RESTAURANT"
+    # Expediteur-only (defaults are fine for the Apple reviewer flow)
+    type_expediteur: Optional[str] = "RESTAURANT"
     adresse: Optional[str] = "Conakry, Guinée"
     latitude: Optional[float] = 9.6412
     longitude: Optional[float] = -13.5784
@@ -61,7 +61,7 @@ async def create_test_account(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Crée un compte test (Partenaire ou Livreur) avec mot de passe et
+    """Crée un compte test (Expediteur ou Livreur) avec mot de passe et
     is_verified=True d'office. Utilisé pour les credentials Apple Reviewer
     et les tests internes."""
     existing = await db.execute(select(User).where(User.phone == payload.phone))
@@ -83,18 +83,18 @@ async def create_test_account(
     await db.flush()
 
     # `consent_accepted_at` is a naive `DateTime` column (no timezone) in
-    # both Partenaire and Livreur models — strip tzinfo to avoid asyncpg
+    # both Expediteur and Livreur models — strip tzinfo to avoid asyncpg
     # rejecting the mix of offset-aware datetime with offset-naive column.
     consent_naive = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    if payload.role == "PARTENAIRE":
+    if payload.role == "EXPEDITEUR":
         try:
-            type_p = TypePartenaire(payload.type_partenaire or "AUTRE")
+            type_p = TypeExpediteur(payload.type_expediteur or "AUTRE")
         except ValueError:
-            type_p = TypePartenaire.AUTRE
-        partenaire = Partenaire(
+            type_p = TypeExpediteur.AUTRE
+        expediteur = Expediteur(
             user_id=user.id,
-            type_partenaire=type_p,
+            type_expediteur=type_p,
             nom=payload.nom,
             adresse=payload.adresse or "Conakry, Guinée",
             latitude=payload.latitude or 9.6412,
@@ -104,7 +104,7 @@ async def create_test_account(
             consent_accepted_at=consent_naive,
             consent_version="apple-v1",
         )
-        db.add(partenaire)
+        db.add(expediteur)
     else:  # LIVREUR
         livreur = Livreur(
             user_id=user.id,
@@ -155,8 +155,8 @@ async def list_test_accounts(
     accounts = []
     for u in users:
         nom = "(inconnu)"
-        if u.role == UserRole.PARTENAIRE:
-            pq = await db.execute(select(Partenaire).where(Partenaire.user_id == u.id))
+        if u.role == UserRole.EXPEDITEUR:
+            pq = await db.execute(select(Expediteur).where(Expediteur.user_id == u.id))
             p = pq.scalar_one_or_none()
             if p:
                 nom = p.nom
@@ -200,11 +200,11 @@ async def delete_test_account(
         livreur = lq.scalar_one_or_none()
         if livreur:
             await db.delete(livreur)
-    elif user.role == UserRole.PARTENAIRE:
-        pq = await db.execute(select(Partenaire).where(Partenaire.user_id == user.id))
-        partenaire = pq.scalar_one_or_none()
-        if partenaire:
-            await db.delete(partenaire)
+    elif user.role == UserRole.EXPEDITEUR:
+        pq = await db.execute(select(Expediteur).where(Expediteur.user_id == user.id))
+        expediteur = pq.scalar_one_or_none()
+        if expediteur:
+            await db.delete(expediteur)
 
     await db.delete(user)
     await db.commit()
@@ -240,10 +240,10 @@ async def get_platform_stats(
     users_result = await db.execute(users_query)
     total_users = users_result.scalar()
     
-    # Nombre de partenaires
-    partenaires_query = select(func.count(Partenaire.id))
-    partenaires_result = await db.execute(partenaires_query)
-    total_partenaires = partenaires_result.scalar()
+    # Nombre de expediteurs
+    expediteurs_query = select(func.count(Expediteur.id))
+    expediteurs_result = await db.execute(expediteurs_query)
+    total_expediteurs = expediteurs_result.scalar()
     
     # Nombre de livreurs
     livreurs_query = select(func.count(Livreur.id))
@@ -299,7 +299,7 @@ async def get_platform_stats(
 
     result = {
         "total_utilisateurs": total_users,
-        "total_partenaires": total_partenaires,
+        "total_expediteurs": total_expediteurs,
         "total_livreurs": total_livreurs,
         "livreurs_actifs": livreurs_actifs,
         "livreurs_verifies": livreurs_verifies,
@@ -531,17 +531,17 @@ async def get_livreur_detail(
     }
 
 
-@router.get("/partenaires/en-attente", response_model=List[dict])
-async def get_partenaires_en_attente(
+@router.get("/expediteurs/en-attente", response_model=List[dict])
+async def get_expediteurs_en_attente(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les partenaires en attente de validation"""
+    """Obtenir les expediteurs en attente de validation"""
     from sqlalchemy.orm import selectinload
 
-    query = select(Partenaire).options(selectinload(Partenaire.user)).where(Partenaire.is_verified == False)
+    query = select(Expediteur).options(selectinload(Expediteur.user)).where(Expediteur.is_verified == False)
     result = await db.execute(query)
-    partenaires = result.scalars().all()
+    expediteurs = result.scalars().all()
     
     return [
         {
@@ -550,65 +550,65 @@ async def get_partenaires_en_attente(
             "adresse": r.adresse,
             "email": r.email,
             "phone": r.user.phone if r.user else None,
-            "type_partenaire": r.type_partenaire,
+            "type_expediteur": r.type_expediteur,
             "created_at": r.created_at,
             # Document — URL présignée temporaire (bucket privé)
             "devanture_url": storage_service.signed_view_url(r.devanture_url),
             "docs_complets": bool(r.devanture_url),
         }
-        for r in partenaires
+        for r in expediteurs
     ]
 
 
-@router.post("/partenaires/{partenaire_id}/valider")
-async def valider_partenaire(
-    partenaire_id: str,
+@router.post("/expediteurs/{expediteur_id}/valider")
+async def valider_expediteur(
+    expediteur_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Valider le compte d'un partenaire"""
-    query = select(Partenaire).where(Partenaire.id == partenaire_id)
+    """Valider le compte d'un expediteur"""
+    query = select(Expediteur).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
-    partenaire = result.scalar_one_or_none()
+    expediteur = result.scalar_one_or_none()
     
-    if not partenaire:
+    if not expediteur:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partenaire non trouvé"
+            detail="Expediteur non trouvé"
         )
     
-    partenaire.is_verified = True
+    expediteur.is_verified = True
 
-    user_query = select(User).where(User.id == partenaire.user_id)
+    user_query = select(User).where(User.id == expediteur.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
         user.is_verified = True
 
     await db.commit()
-    return {"message": "Partenaire validé avec succès"}
+    return {"message": "Expediteur validé avec succès"}
 
 
-@router.post("/partenaires/{partenaire_id}/rejeter")
-async def rejeter_partenaire(
-    partenaire_id: str,
+@router.post("/expediteurs/{expediteur_id}/rejeter")
+async def rejeter_expediteur(
+    expediteur_id: str,
     body: dict,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Rejeter le dossier d'un partenaire avec motif."""
-    query = select(Partenaire).where(Partenaire.id == partenaire_id)
+    """Rejeter le dossier d'un expediteur avec motif."""
+    query = select(Expediteur).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
-    partenaire = result.scalar_one_or_none()
-    if not partenaire:
-        raise HTTPException(status_code=404, detail="Partenaire non trouvé")
+    expediteur = result.scalar_one_or_none()
+    if not expediteur:
+        raise HTTPException(status_code=404, detail="Expediteur non trouvé")
 
-    partenaire.devanture_url = None
-    partenaire.rccm_url = None
+    expediteur.devanture_url = None
+    expediteur.rccm_url = None
     await db.commit()
 
     motif = body.get("motif", "")
-    user_q = await db.execute(select(User).where(User.id == partenaire.user_id))
+    user_q = await db.execute(select(User).where(User.id == expediteur.user_id))
     user = user_q.scalar_one_or_none()
     if user and user.device_token:
         msg = f"Motif : {motif}" if motif else "Veuillez renvoyer vos documents."
@@ -621,26 +621,26 @@ async def rejeter_partenaire(
     return {"message": "Dossier rejeté", "motif": motif}
 
 
-@router.post("/partenaires/{partenaire_id}/suspendre")
-async def suspendre_partenaire(
-    partenaire_id: str,
+@router.post("/expediteurs/{expediteur_id}/suspendre")
+async def suspendre_expediteur(
+    expediteur_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Suspendre un partenaire"""
-    query = select(Partenaire).where(Partenaire.id == partenaire_id)
+    """Suspendre un expediteur"""
+    query = select(Expediteur).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
-    partenaire = result.scalar_one_or_none()
+    expediteur = result.scalar_one_or_none()
     
-    if not partenaire:
+    if not expediteur:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partenaire non trouvé"
+            detail="Expediteur non trouvé"
         )
     
-    partenaire.is_verified = False
+    expediteur.is_verified = False
     
-    user_query = select(User).where(User.id == partenaire.user_id)
+    user_query = select(User).where(User.id == expediteur.user_id)
     user_result = await db.execute(user_query)
     user = user_result.scalar_one_or_none()
     if user:
@@ -648,28 +648,28 @@ async def suspendre_partenaire(
     
     await db.commit()
     
-    return {"message": "Partenaire suspendu"}
+    return {"message": "Expediteur suspendu"}
 
 
-@router.get("/partenaires/tous", response_model=List[dict])
-async def get_tous_partenaires(
+@router.get("/expediteurs/tous", response_model=List[dict])
+async def get_tous_expediteurs(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """Obtenir les partenaires (paginé — cap à 200 par défaut, max 500)."""
+    """Obtenir les expediteurs (paginé — cap à 200 par défaut, max 500)."""
     from sqlalchemy.orm import selectinload
 
     query = (
-        select(Partenaire)
-        .options(selectinload(Partenaire.user))
-        .order_by(Partenaire.created_at.desc())
+        select(Expediteur)
+        .options(selectinload(Expediteur.user))
+        .order_by(Expediteur.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
     result = await db.execute(query)
-    partenaires = result.scalars().all()
+    expediteurs = result.scalars().all()
     
     return [
         {
@@ -678,36 +678,36 @@ async def get_tous_partenaires(
             "adresse": r.adresse,
             "email": r.email,
             "phone": r.user.phone if r.user else None,
-            "type_partenaire": r.type_partenaire,
+            "type_expediteur": r.type_expediteur,
             "is_open": r.is_open,
             "is_verified": r.is_verified,
             "note_moyenne": r.note_moyenne,
             "nombre_evaluations": r.nombre_evaluations,
             "created_at": r.created_at,
         }
-        for r in partenaires
+        for r in expediteurs
     ]
 
 
-@router.get("/partenaires/{partenaire_id}", response_model=dict)
-async def get_partenaire_detail(
-    partenaire_id: str,
+@router.get("/expediteurs/{expediteur_id}", response_model=dict)
+async def get_expediteur_detail(
+    expediteur_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir le détail complet d'un partenaire"""
+    """Obtenir le détail complet d'un expediteur"""
     from sqlalchemy.orm import selectinload
 
-    query = select(Partenaire).options(selectinload(Partenaire.user)).where(Partenaire.id == partenaire_id)
+    query = select(Expediteur).options(selectinload(Expediteur.user)).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
     r = result.scalar_one_or_none()
 
     if not r:
-        raise HTTPException(status_code=404, detail="Partenaire non trouvé")
+        raise HTTPException(status_code=404, detail="Expediteur non trouvé")
 
     commandes_count = await db.execute(
         select(func.count(Commande.id)).where(
-            Commande.partenaire_id == r.id,
+            Commande.expediteur_id == r.id,
             Commande.status == CommandeStatus.TERMINEE
         )
     )
@@ -718,7 +718,7 @@ async def get_partenaire_detail(
         "nom": r.nom,
         "description": r.description,
         "adresse": r.adresse,
-        "type_partenaire": r.type_partenaire,
+        "type_expediteur": r.type_expediteur,
         "email": r.email,
         "phone": r.user.phone if r.user else None,
         "telephone_secondaire": r.telephone_secondaire,
@@ -742,13 +742,13 @@ async def get_commandes_recentes(
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les commandes récentes avec infos partenaire et livreur"""
+    """Obtenir les commandes récentes avec infos expediteur et livreur"""
     from sqlalchemy.orm import selectinload
 
     query = (
         select(Commande)
         .options(
-            selectinload(Commande.partenaire).selectinload(Partenaire.user),
+            selectinload(Commande.expediteur).selectinload(Expediteur.user),
             selectinload(Commande.livreur).selectinload(Livreur.user),
         )
         .order_by(Commande.created_at.desc())
@@ -759,8 +759,8 @@ async def get_commandes_recentes(
 
     items = []
     for c in commandes:
-        partenaire_nom = c.partenaire.nom if c.partenaire else None
-        partenaire_phone = c.partenaire.user.phone if c.partenaire and c.partenaire.user else None
+        expediteur_nom = c.expediteur.nom if c.expediteur else None
+        expediteur_phone = c.expediteur.user.phone if c.expediteur and c.expediteur.user else None
         livreur_nom = c.livreur.nom_complet if c.livreur else None
         livreur_phone = c.livreur.user.phone if c.livreur and c.livreur.user else None
 
@@ -771,8 +771,8 @@ async def get_commandes_recentes(
             "prix_propose": c.prix_propose,
             "contact_client_nom": c.contact_client_nom,
             "contact_client_telephone": c.contact_client_telephone,
-            "partenaire_nom": partenaire_nom,
-            "partenaire_phone": partenaire_phone,
+            "expediteur_nom": expediteur_nom,
+            "expediteur_phone": expediteur_phone,
             "livreur_nom": livreur_nom,
             "livreur_phone": livreur_phone,
             "mode_paiement": c.mode_paiement,
@@ -904,11 +904,11 @@ async def get_tous_users(
             lr = await db.execute(lq)
             livreur = lr.scalar_one_or_none()
             nom = livreur.nom_complet if livreur else None
-        elif u.role == "PARTENAIRE":
-            pq = select(Partenaire).where(Partenaire.user_id == u.id)
+        elif u.role == "EXPEDITEUR":
+            pq = select(Expediteur).where(Expediteur.user_id == u.id)
             pr = await db.execute(pq)
-            partenaire = pr.scalar_one_or_none()
-            nom = partenaire.nom if partenaire else None
+            expediteur = pr.scalar_one_or_none()
+            nom = expediteur.nom if expediteur else None
 
         items.append({
             "id": str(u.id),
@@ -974,12 +974,12 @@ async def supprimer_user(
         livreur = lr.scalar_one_or_none()
         if livreur:
             await db.delete(livreur)
-    elif user.role == "PARTENAIRE":
-        pq = select(Partenaire).where(Partenaire.user_id == user.id)
+    elif user.role == "EXPEDITEUR":
+        pq = select(Expediteur).where(Expediteur.user_id == user.id)
         pr = await db.execute(pq)
-        partenaire = pr.scalar_one_or_none()
-        if partenaire:
-            await db.delete(partenaire)
+        expediteur = pr.scalar_one_or_none()
+        if expediteur:
+            await db.delete(expediteur)
 
     await db.delete(user)
     await db.commit()
@@ -993,9 +993,9 @@ class CreditManuelRequest(BaseModel):
     motif: Optional[str] = Field(None, max_length=255, description="Raison du crédit manuel")
 
 
-@router.post("/partenaires/{partenaire_id}/credit", status_code=status.HTTP_201_CREATED)
-async def crediter_partenaire(
-    partenaire_id: str,
+@router.post("/expediteurs/{expediteur_id}/credit", status_code=status.HTTP_201_CREATED)
+async def crediter_expediteur(
+    expediteur_id: str,
     body: CreditManuelRequest,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
@@ -1003,13 +1003,13 @@ async def crediter_partenaire(
     """Créditer manuellement le Crédit d'un expéditeur (correction, geste commercial,
     confirmation Mobile Money hors PSP)."""
     p = (await db.execute(
-        select(Partenaire).where(Partenaire.id == partenaire_id)
+        select(Expediteur).where(Expediteur.id == expediteur_id)
     )).scalar_one_or_none()
     if not p:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expéditeur introuvable")
 
     try:
-        txn = await credit_service.crediter_admin(db, partenaire_id, body.montant, motif=body.motif)
+        txn = await credit_service.crediter_admin(db, expediteur_id, body.montant, motif=body.motif)
     except MontantInvalide as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -1021,29 +1021,29 @@ async def crediter_partenaire(
     }
 
 
-@router.get("/partenaires/{partenaire_id}/credit")
-async def get_partenaire_credit(
-    partenaire_id: str,
+@router.get("/expediteurs/{expediteur_id}/credit")
+async def get_expediteur_credit(
+    expediteur_id: str,
     limit: int = 30,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Solde de Crédit d'un expéditeur + derniers mouvements (supervision)."""
     p = (await db.execute(
-        select(Partenaire).where(Partenaire.id == partenaire_id)
+        select(Expediteur).where(Expediteur.id == expediteur_id)
     )).scalar_one_or_none()
     if not p:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expéditeur introuvable")
 
     txns = (await db.execute(
         select(CreditTransaction)
-        .where(CreditTransaction.partenaire_id == p.id)
+        .where(CreditTransaction.expediteur_id == p.id)
         .order_by(CreditTransaction.created_at.desc())
         .limit(min(limit, 200))
     )).scalars().all()
 
     return {
-        "partenaire_id": str(p.id),
+        "expediteur_id": str(p.id),
         "nom": p.nom,
         "credit_solde": round(p.credit_solde or 0.0, 2),
         "transactions": [

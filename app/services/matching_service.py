@@ -22,9 +22,9 @@ class MatchingService:
     async def diffuser_commande(
         db: AsyncSession,
         commande: Commande,
-        partenaire_latitude: float,
-        partenaire_longitude: float,
-        partenaire_nom: str = "Commerce"
+        expediteur_latitude: float,
+        expediteur_longitude: float,
+        expediteur_nom: str = "Commerce"
     ) -> int:
         """
         Diffuser une commande aux livreurs proches.
@@ -34,8 +34,8 @@ class MatchingService:
         Args:
             db: Session de base de données
             commande: Commande à diffuser
-            partenaire_latitude: Latitude du partenaire
-            partenaire_longitude: Longitude du partenaire
+            expediteur_latitude: Latitude du expediteur
+            expediteur_longitude: Longitude du expediteur
             
         Returns:
             Nombre de livreurs notifiés
@@ -48,8 +48,8 @@ class MatchingService:
         # Trouver les livreurs proches pour les notifier
         livreurs_proches = await GeolocationService.trouver_livreurs_proches(
             db,
-            partenaire_latitude,
-            partenaire_longitude,
+            expediteur_latitude,
+            expediteur_longitude,
             settings.DEFAULT_SEARCH_RADIUS_KM
         )
         
@@ -82,7 +82,7 @@ class MatchingService:
             await notification_service.notifier_nouvelle_commande(
                 device_tokens=device_tokens,
                 numero_commande=commande.numero_commande,
-                partenaire_nom=partenaire_nom,
+                expediteur_nom=expediteur_nom,
                 prix=commande.prix_propose,
                 distance_km=livreurs_proches[0][1] if livreurs_proches else 0
             )
@@ -129,8 +129,8 @@ class MatchingService:
         
         await db.commit()
         
-        # Notifier le partenaire
-        # Note: Implémenter la récupération du device_token du partenaire
+        # Notifier le expediteur
+        # Note: Implémenter la récupération du device_token du expediteur
         logger.info(f"Commande {commande.numero_commande} acceptée par livreur {livreur.id}")
         
         return True

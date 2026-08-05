@@ -1,6 +1,6 @@
-"""Crédit de l'Expéditeur (partenaire) — solde, historique, recharge (PSP).
+"""Crédit de l'Expéditeur (expediteur) — solde, historique, recharge (PSP).
 
-Miroir côté expéditeur du wallet livreur (``wallet.py``), monté sous ``/partenaires``.
+Miroir côté expéditeur du wallet livreur (``wallet.py``), monté sous ``/expediteurs``.
 Le Crédit se **dépense** (commission des courses) et se **recharge** via Mobile Money :
 la recharge est appliquée par le webhook GeniusPay après confirmation du paiement
 (cf. ``payments.py``), pas ici.
@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 
 from ....core.database import get_db
 from ....core.config import settings
-from ....models.partenaire import Partenaire
+from ....models.expediteur import Expediteur
 from ....models.credit_transaction import CreditTransaction
 from ....services import genius_pay_service, soldes
 from ....services.genius_pay_service import GeniusPayError
-from ....utils.dependencies import get_current_partenaire
+from ....utils.dependencies import get_current_expediteur
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,31 +31,31 @@ class RechargeCreditRequest(BaseModel):
 
 @router.get("/me/credit")
 async def get_credit(
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
     """Solde de Crédit courant de l'expéditeur."""
-    return {"credit_solde": round(partenaire.credit_solde or 0.0, 2)}
+    return {"credit_solde": round(expediteur.credit_solde or 0.0, 2)}
 
 
 @router.get("/me/credit/transactions")
 async def get_credit_transactions(
     page: int = 1,
     limit: int = 20,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
     """Historique paginé des mouvements de Crédit (recharge / commission / remboursement)."""
     offset = (page - 1) * limit
 
     count_r = await db.execute(
-        select(func.count()).where(CreditTransaction.partenaire_id == partenaire.id)
+        select(func.count()).where(CreditTransaction.expediteur_id == expediteur.id)
     )
     total = count_r.scalar() or 0
 
     txn_r = await db.execute(
         select(CreditTransaction)
-        .where(CreditTransaction.partenaire_id == partenaire.id)
+        .where(CreditTransaction.expediteur_id == expediteur.id)
         .order_by(CreditTransaction.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -86,7 +86,7 @@ async def get_credit_transactions(
 @router.post("/me/credit/recharge", status_code=status.HTTP_201_CREATED)
 async def recharger_credit(
     body: RechargeCreditRequest,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
     """Initie une recharge du Crédit via Mobile Money.
@@ -107,7 +107,7 @@ async def recharger_credit(
 
     try:
         paiement = await genius_pay_service.initier_paiement(
-            partenaire_id=str(partenaire.id),
+            expediteur_id=str(expediteur.id),
             montant=body.montant,
             description="Recharge Crédit Sönaiyaa",
             metadata={"type": "credit_recharge", "montant": int(body.montant)},

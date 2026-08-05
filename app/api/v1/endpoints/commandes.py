@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from ....core.database import get_db
 from ....core.config import settings
 from ....models.commande import Commande, CommandeStatus, ModePaiement
-from ....models.partenaire import Partenaire
+from ....models.expediteur import Expediteur
 from ....models.livreur import Livreur
 from ....models.user import User, UserRole
 from ....models.wallet_transaction import WalletTransaction
@@ -22,7 +22,7 @@ from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
 from ....services.notification_service import notification_service
 from ....services import pricing, credit_service, soldes
-from ....utils.dependencies import get_current_partenaire, get_current_livreur, get_current_user
+from ....utils.dependencies import get_current_expediteur, get_current_livreur, get_current_user
 import logging
 import secrets
 
@@ -80,7 +80,7 @@ def calculer_prix(distance_km: float, nature_colis: str = "standard") -> float:
 @router.post("/estimer-prix")
 async def estimer_prix(
     data: dict,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -88,10 +88,10 @@ async def estimer_prix(
         P = (P_base + d_km × T_km) × M_colis × M_heure
     P_base = 10 000 GNF  |  T_km = 1 500 GNF/km
     """
-    if not partenaire.is_verified:
+    if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre partenaire doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des commandes"
         )
 
     lat = data.get("latitude_client")
@@ -102,7 +102,7 @@ async def estimer_prix(
     nature = str(data.get("nature_colis", "standard")).lower()
 
     distance_km = GeolocationService.calculer_distance(
-        (partenaire.latitude, partenaire.longitude),
+        (expediteur.latitude, expediteur.longitude),
         (lat, lng)
     )
     duree = GeolocationService.estimer_duree_trajet(distance_km)
@@ -125,7 +125,7 @@ async def estimer_prix(
 @router.post("/", response_model=CommandeResponse, status_code=status.HTTP_201_CREATED)
 async def create_commande(
     commande_data: CommandeCreate,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
     """Créer une nouvelle commande de livraison.
@@ -140,10 +140,10 @@ async def create_commande(
       partage de position. Le prix sera recalculé puis le paiement créé
       dans `/loc/{token}/submit` après partage.
     """
-    if not partenaire.is_verified:
+    if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre partenaire doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des commandes"
         )
 
     has_position = (
@@ -156,7 +156,7 @@ async def create_commande(
 
     if has_position:
         distance_km = GeolocationService.calculer_distance(
-            (partenaire.latitude, partenaire.longitude),
+            (expediteur.latitude, expediteur.longitude),
             (commande_data.latitude_client, commande_data.longitude_client),
         )
         duree_estimee = GeolocationService.estimer_duree_trajet(distance_km)
@@ -177,7 +177,7 @@ async def create_commande(
 
     commande = Commande(
         numero_commande=Commande.generer_numero_commande(),
-        partenaire_id=partenaire.id,
+        expediteur_id=expediteur.id,
         adresse_client=commande_data.adresse_client,
         latitude_client=commande_data.latitude_client,
         longitude_client=commande_data.longitude_client,
@@ -210,7 +210,7 @@ async def create_commande(
     if commande.mode_paiement == ModePaiement.CASH:
         try:
             await credit_service.debiter_commission(
-                db, partenaire.id, commission,
+                db, expediteur.id, commission,
                 commande_id=commande.id,
                 description=f"Commission course #{commande.numero_commande}",
             )
@@ -236,7 +236,7 @@ async def create_commande(
                 from ....services import genius_pay_service
                 paiement = await genius_pay_service.initier_paiement(
                     commande_id=str(commande.id),
-                    partenaire_id=str(partenaire.id),
+                    expediteur_id=str(expediteur.id),
                     montant=commande.prix_propose,
                     description=f"Livraison {commande.numero_commande}",
                     nom_client=commande.contact_client_nom,
@@ -249,14 +249,14 @@ async def create_commande(
             except Exception as e:  # noqa: BLE001
                 logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
                 await MatchingService.diffuser_commande(
-                    db, commande, partenaire.latitude, partenaire.longitude,
-                    partenaire_nom=partenaire.nom,
+                    db, commande, expediteur.latitude, expediteur.longitude,
+                    expediteur_nom=expediteur.nom,
                 )
         else:
             # Cash → diffuser immédiatement
             await MatchingService.diffuser_commande(
-                db, commande, partenaire.latitude, partenaire.longitude,
-                partenaire_nom=partenaire.nom,
+                db, commande, expediteur.latitude, expediteur.longitude,
+                expediteur_nom=expediteur.nom,
             )
     # else : position absente → on ne diffuse PAS, on attend que le client
     # partage sa position via /loc/{token} qui s'occupera du calcul prix +
@@ -277,7 +277,7 @@ async def create_commande(
             telephone=commande.contact_client_telephone,
             nom_client=commande.contact_client_nom,
             numero_commande=commande.numero_commande,
-            partenaire_nom=partenaire.nom,
+            expediteur_nom=expediteur.nom,
             montant=commande.prix_propose if has_position else 0,
             tracking_url=action_url,
             checkout_url=checkout_url,
@@ -292,14 +292,14 @@ async def create_commande(
 
 @router.get("/me")
 async def get_my_commandes(
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     status_filter: str = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir mes commandes (partenaire) — paginé"""
-    base = select(Commande).where(Commande.partenaire_id == partenaire.id)
+    """Obtenir mes commandes (expediteur) — paginé"""
+    base = select(Commande).where(Commande.expediteur_id == expediteur.id)
     
     if status_filter:
         base = base.where(Commande.status == status_filter)
@@ -348,8 +348,8 @@ async def get_commandes_disponibles(
 
     # JOIN unique au lieu de N+1 requêtes
     query = (
-        select(Commande, Partenaire)
-        .join(Partenaire, Commande.partenaire_id == Partenaire.id)
+        select(Commande, Expediteur)
+        .join(Expediteur, Commande.expediteur_id == Expediteur.id)
         .where(Commande.status == CommandeStatus.DIFFUSEE)
         .order_by(Commande.created_at.desc())
     )
@@ -357,14 +357,14 @@ async def get_commandes_disponibles(
     rows = result.all()
 
     commandes_proches = []
-    for commande, partenaire in rows:
+    for commande, expediteur in rows:
         distance_livreur = None
         duree_livreur = None
 
-        if has_position and partenaire.latitude and partenaire.longitude:
+        if has_position and expediteur.latitude and expediteur.longitude:
             distance_livreur = GeolocationService.calculer_distance(
                 (livreur_lat, livreur_lon),
-                (partenaire.latitude, partenaire.longitude)
+                (expediteur.latitude, expediteur.longitude)
             )
             if distance_livreur > rayon:
                 continue
@@ -373,7 +373,7 @@ async def get_commandes_disponibles(
         commandes_proches.append(CommandeDisponibleResponse(
             id=commande.id,
             numero_commande=commande.numero_commande,
-            partenaire_id=commande.partenaire_id,
+            expediteur_id=commande.expediteur_id,
             adresse_client=commande.adresse_client,
             latitude_client=commande.latitude_client,
             longitude_client=commande.longitude_client,
@@ -391,10 +391,10 @@ async def get_commandes_disponibles(
             mode_paiement=commande.mode_paiement,
             paiement_confirme=commande.paiement_confirme,
             exige_code_livraison=commande.exige_code_livraison,
-            partenaire_nom=partenaire.nom,
-            partenaire_adresse=partenaire.adresse,
-            partenaire_latitude=partenaire.latitude,
-            partenaire_longitude=partenaire.longitude,
+            expediteur_nom=expediteur.nom,
+            expediteur_adresse=expediteur.adresse,
+            expediteur_latitude=expediteur.latitude,
+            expediteur_longitude=expediteur.longitude,
             distance_livreur_km=round(distance_livreur, 2) if distance_livreur is not None else None,
             duree_livreur_minutes=duree_livreur,
         ))
@@ -502,13 +502,13 @@ async def accepter_commande(
     
     await db.refresh(commande)
     
-    # Notifier le partenaire que sa commande a été acceptée
+    # Notifier le expediteur que sa commande a été acceptée
     try:
-        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-        partenaire_result = await db.execute(partenaire_query)
-        partenaire_notif = partenaire_result.scalar_one_or_none()
-        if partenaire_notif:
-            token = await _get_user_device_token(db, partenaire_notif.user_id)
+        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_result = await db.execute(expediteur_query)
+        expediteur_notif = expediteur_result.scalar_one_or_none()
+        if expediteur_notif:
+            token = await _get_user_device_token(db, expediteur_notif.user_id)
             if token:
                 await notification_service.notifier_commande_acceptee(
                     device_token=token,
@@ -618,13 +618,13 @@ async def update_commande_status(
     await db.commit()
     await db.refresh(commande)
     
-    # Notifier le partenaire du changement de statut
+    # Notifier le expediteur du changement de statut
     try:
-        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-        partenaire_result = await db.execute(partenaire_query)
-        partenaire_notif = partenaire_result.scalar_one_or_none()
-        if partenaire_notif:
-            token = await _get_user_device_token(db, partenaire_notif.user_id)
+        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_result = await db.execute(expediteur_query)
+        expediteur_notif = expediteur_result.scalar_one_or_none()
+        if expediteur_notif:
+            token = await _get_user_device_token(db, expediteur_notif.user_id)
             if token:
                 await notification_service.notifier_changement_status(
                     device_token=token,
@@ -644,7 +644,7 @@ async def annuler_commande(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Annuler une commande (partenaire propriétaire, livreur assigné, ou admin)"""
+    """Annuler une commande (expediteur propriétaire, livreur assigné, ou admin)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -657,20 +657,20 @@ async def annuler_commande(
     
     # Vérifier les droits d'accès
     is_admin = current_user.role == UserRole.ADMIN
-    is_partenaire_owner = False
+    is_expediteur_owner = False
     is_livreur_assigned = False
-    if current_user.role == UserRole.PARTENAIRE:
-        p_q = select(Partenaire).where(Partenaire.user_id == current_user.id)
+    if current_user.role == UserRole.EXPEDITEUR:
+        p_q = select(Expediteur).where(Expediteur.user_id == current_user.id)
         p_r = await db.execute(p_q)
         p = p_r.scalar_one_or_none()
-        is_partenaire_owner = p and commande.partenaire_id == p.id
+        is_expediteur_owner = p and commande.expediteur_id == p.id
     elif current_user.role == UserRole.LIVREUR:
         l_q = select(Livreur).where(Livreur.user_id == current_user.id)
         l_r = await db.execute(l_q)
         l = l_r.scalar_one_or_none()
         is_livreur_assigned = l and commande.livreur_id == l.id
 
-    if not (is_admin or is_partenaire_owner or is_livreur_assigned):
+    if not (is_admin or is_expediteur_owner or is_livreur_assigned):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Vous n'êtes pas autorisé à annuler cette commande"
@@ -705,7 +705,7 @@ async def annuler_commande(
     if commande.mode_paiement == ModePaiement.CASH and commande.commission_plateforme:
         try:
             await credit_service.rembourser_commission(
-                db, commande.partenaire_id, commande.commission_plateforme,
+                db, commande.expediteur_id, commande.commission_plateforme,
                 commande_id=commande.id,
                 description=f"Remboursement course annulée #{commande.numero_commande}",
             )
@@ -719,7 +719,7 @@ async def annuler_commande(
     await db.commit()
     await db.refresh(commande)
     
-    # Notifier le livreur (si assigné) et le partenaire de l'annulation
+    # Notifier le livreur (si assigné) et le expediteur de l'annulation
     try:
         raison = annulation.raison or ""
         data = {"type": "commande_annulee", "numero_commande": commande.numero_commande, "raison": raison}
@@ -732,7 +732,7 @@ async def annuler_commande(
             if liv:
                 token = await _get_user_device_token(db, liv.user_id)
                 if token:
-                    if is_partenaire_owner:
+                    if is_expediteur_owner:
                         msg_livreur = f"Le commerce a annulé la course #{commande.numero_commande}."
                     elif is_admin:
                         msg_livreur = f"La course #{commande.numero_commande} a été annulée par l'admin."
@@ -744,23 +744,23 @@ async def annuler_commande(
                         token, titre="Course annulée", message=msg_livreur, data=data
                     )
 
-        # Notifier le partenaire
-        partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-        partenaire_r = await db.execute(partenaire_q)
-        partenaire_notif = partenaire_r.scalar_one_or_none()
-        if partenaire_notif:
-            token = await _get_user_device_token(db, partenaire_notif.user_id)
+        # Notifier le expediteur
+        expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_r = await db.execute(expediteur_q)
+        expediteur_notif = expediteur_r.scalar_one_or_none()
+        if expediteur_notif:
+            token = await _get_user_device_token(db, expediteur_notif.user_id)
             if token:
                 if is_livreur_assigned:
-                    msg_partenaire = f"Le livreur a annulé la course #{commande.numero_commande}."
+                    msg_expediteur = f"Le livreur a annulé la course #{commande.numero_commande}."
                 elif is_admin:
-                    msg_partenaire = f"La course #{commande.numero_commande} a été annulée par l'admin."
+                    msg_expediteur = f"La course #{commande.numero_commande} a été annulée par l'admin."
                 else:
-                    msg_partenaire = f"Course #{commande.numero_commande} annulée."
+                    msg_expediteur = f"Course #{commande.numero_commande} annulée."
                 if raison:
-                    msg_partenaire += f" Motif : {raison}"
+                    msg_expediteur += f" Motif : {raison}"
                 await notification_service.envoyer_notification_push(
-                    token, titre="Course annulée", message=msg_partenaire, data=data
+                    token, titre="Course annulée", message=msg_expediteur, data=data
                 )
     except Exception as e:
         logger.warning(f"Notification annulation échouée: {e}")
@@ -772,13 +772,13 @@ async def annuler_commande(
 async def evaluer_livreur(
     commande_id: str,
     evaluation: CommandeEvaluation,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Évaluer le livreur après livraison (partenaire)"""
+    """Évaluer le livreur après livraison (expediteur)"""
     query = select(Commande).where(
         Commande.id == commande_id,
-        Commande.partenaire_id == partenaire.id,
+        Commande.expediteur_id == expediteur.id,
         Commande.status == CommandeStatus.TERMINEE
     )
     result = await db.execute(query)
@@ -861,7 +861,7 @@ async def get_commande_details(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les détails d'une commande (partenaire propriétaire, livreur assigné, ou admin)"""
+    """Obtenir les détails d'une commande (expediteur propriétaire, livreur assigné, ou admin)"""
     query = select(Commande).where(Commande.id == commande_id)
     result = await db.execute(query)
     commande = result.scalar_one_or_none()
@@ -874,37 +874,37 @@ async def get_commande_details(
     
     # Vérifier les droits d'accès
     is_admin = current_user.role == UserRole.ADMIN
-    is_partenaire_owner = False
+    is_expediteur_owner = False
     is_livreur_assigned = False
-    if current_user.role == UserRole.PARTENAIRE:
-        p_q = select(Partenaire).where(Partenaire.user_id == current_user.id)
+    if current_user.role == UserRole.EXPEDITEUR:
+        p_q = select(Expediteur).where(Expediteur.user_id == current_user.id)
         p_r = await db.execute(p_q)
         p = p_r.scalar_one_or_none()
-        is_partenaire_owner = p and commande.partenaire_id == p.id
+        is_expediteur_owner = p and commande.expediteur_id == p.id
     elif current_user.role == UserRole.LIVREUR:
         l_q = select(Livreur).where(Livreur.user_id == current_user.id)
         l_r = await db.execute(l_q)
         l = l_r.scalar_one_or_none()
         is_livreur_assigned = l and commande.livreur_id == l.id
 
-    if not (is_admin or is_partenaire_owner or is_livreur_assigned):
+    if not (is_admin or is_expediteur_owner or is_livreur_assigned):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Vous n'êtes pas autorisé à consulter cette commande"
         )
     
-    # Récupérer les détails partenaire et livreur
+    # Récupérer les détails expediteur et livreur
     response_dict = CommandeResponse.model_validate(commande).model_dump()
     
-    # Ajouter le partenaire
-    if commande.partenaire_id:
-        partenaire_query = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-        partenaire_result = await db.execute(partenaire_query)
-        partenaire = partenaire_result.scalar_one_or_none()
-        if partenaire:
-            response_dict["partenaire"] = {
-                "nom": partenaire.nom,
-                "adresse": partenaire.adresse
+    # Ajouter le expediteur
+    if commande.expediteur_id:
+        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_result = await db.execute(expediteur_query)
+        expediteur = expediteur_result.scalar_one_or_none()
+        if expediteur:
+            response_dict["expediteur"] = {
+                "nom": expediteur.nom,
+                "adresse": expediteur.adresse
             }
     
     # Ajouter le livreur

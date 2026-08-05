@@ -3,153 +3,153 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 from ....core.database import get_db
-from ....models.partenaire import Partenaire
+from ....models.expediteur import Expediteur
 from ....models.user import User
-from ....schemas.partenaire import (
-    PartenaireCreate,
-    PartenaireUpdate,
-    PartenaireResponse
+from ....schemas.expediteur import (
+    ExpediteurCreate,
+    ExpediteurUpdate,
+    ExpediteurResponse
 )
-from ....utils.dependencies import get_current_user, get_current_partenaire
+from ....utils.dependencies import get_current_user, get_current_expediteur
 from ....services.storage_service import storage_service
 
 router = APIRouter()
 
 
-@router.post("/", response_model=PartenaireResponse, status_code=status.HTTP_201_CREATED)
-async def create_partenaire(
-    partenaire_data: PartenaireCreate,
+@router.post("/", response_model=ExpediteurResponse, status_code=status.HTTP_201_CREATED)
+async def create_expediteur(
+    expediteur_data: ExpediteurCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Créer le profil partenaire (après inscription)"""
+    """Créer le profil expediteur (après inscription)"""
     # Vérifier qu'il n'a pas déjà un profil
-    query = select(Partenaire).where(Partenaire.user_id == current_user.id)
+    query = select(Expediteur).where(Expediteur.user_id == current_user.id)
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
     
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Profil partenaire déjà existant"
+            detail="Profil expediteur déjà existant"
         )
     
-    # Créer le partenaire
-    partenaire = Partenaire(
+    # Créer le expediteur
+    expediteur = Expediteur(
         user_id=current_user.id,
-        type_partenaire=partenaire_data.type_partenaire,
-        nom=partenaire_data.nom,
-        description=partenaire_data.description,
-        adresse=partenaire_data.adresse,
-        latitude=partenaire_data.latitude,
-        longitude=partenaire_data.longitude,
-        email=partenaire_data.email,
-        telephone_secondaire=partenaire_data.telephone_secondaire,
-        horaires=partenaire_data.horaires
+        type_expediteur=expediteur_data.type_expediteur,
+        nom=expediteur_data.nom,
+        description=expediteur_data.description,
+        adresse=expediteur_data.adresse,
+        latitude=expediteur_data.latitude,
+        longitude=expediteur_data.longitude,
+        email=expediteur_data.email,
+        telephone_secondaire=expediteur_data.telephone_secondaire,
+        horaires=expediteur_data.horaires
     )
     
-    db.add(partenaire)
+    db.add(expediteur)
     await db.commit()
-    await db.refresh(partenaire)
+    await db.refresh(expediteur)
     
-    return partenaire
+    return expediteur
 
 
-@router.get("/me", response_model=PartenaireResponse)
-async def get_my_partenaire(
-    partenaire: Partenaire = Depends(get_current_partenaire)
+@router.get("/me", response_model=ExpediteurResponse)
+async def get_my_expediteur(
+    expediteur: Expediteur = Depends(get_current_expediteur)
 ):
-    """Obtenir mon profil partenaire"""
-    return partenaire
+    """Obtenir mon profil expediteur"""
+    return expediteur
 
 
-@router.patch("/me", response_model=PartenaireResponse)
-async def update_my_partenaire(
-    partenaire_data: PartenaireUpdate,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+@router.patch("/me", response_model=ExpediteurResponse)
+async def update_my_expediteur(
+    expediteur_data: ExpediteurUpdate,
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Mettre à jour mon profil partenaire"""
-    update_dict = partenaire_data.model_dump(exclude_unset=True)
+    """Mettre à jour mon profil expediteur"""
+    update_dict = expediteur_data.model_dump(exclude_unset=True)
     
     for key, value in update_dict.items():
-        setattr(partenaire, key, value)
+        setattr(expediteur, key, value)
     
     await db.commit()
-    await db.refresh(partenaire)
+    await db.refresh(expediteur)
     
-    return partenaire
+    return expediteur
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_my_account(
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
     """Supprimer mon compte (droit à l’effacement RGPD)"""
     # Anonymiser les données personnelles plutôt que supprimer
     # pour conserver l’historique des commandes
-    partenaire.nom = "Compte supprimé"
-    partenaire.email = None
-    partenaire.description = None
-    partenaire.adresse = "Anonymisé"
-    partenaire.latitude = 0.0
-    partenaire.longitude = 0.0
-    partenaire.telephone_secondaire = None
-    partenaire.is_open = False
+    expediteur.nom = "Compte supprimé"
+    expediteur.email = None
+    expediteur.description = None
+    expediteur.adresse = "Anonymisé"
+    expediteur.latitude = 0.0
+    expediteur.longitude = 0.0
+    expediteur.telephone_secondaire = None
+    expediteur.is_open = False
 
     # Anonymiser le user
-    user_query = select(User).where(User.id == partenaire.user_id)
+    user_query = select(User).where(User.id == expediteur.user_id)
     result = await db.execute(user_query)
     user = result.scalar_one_or_none()
     if user:
-        user.phone = f"deleted_{partenaire.id}"
+        user.phone = f"deleted_{expediteur.id}"
         user.password_hash = "deleted"
 
     await db.commit()
 
 
-@router.get("/", response_model=List[PartenaireResponse])
-async def list_partenaires(
+@router.get("/", response_model=List[ExpediteurResponse])
+async def list_expediteurs(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
-    """Lister les partenaires (pour admin ou public)"""
-    query = select(Partenaire).offset(skip).limit(limit)
+    """Lister les expediteurs (pour admin ou public)"""
+    query = select(Expediteur).offset(skip).limit(limit)
     result = await db.execute(query)
-    partenaires = result.scalars().all()
+    expediteurs = result.scalars().all()
     
-    return partenaires
+    return expediteurs
 
 
-@router.get("/{partenaire_id}", response_model=PartenaireResponse)
-async def get_partenaire(
-    partenaire_id: str,
+@router.get("/{expediteur_id}", response_model=ExpediteurResponse)
+async def get_expediteur(
+    expediteur_id: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir un partenaire par ID"""
-    query = select(Partenaire).where(Partenaire.id == partenaire_id)
+    """Obtenir un expediteur par ID"""
+    query = select(Expediteur).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
-    partenaire = result.scalar_one_or_none()
+    expediteur = result.scalar_one_or_none()
 
-    if not partenaire:
+    if not expediteur:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partenaire non trouvé"
+            detail="Expediteur non trouvé"
         )
 
-    return partenaire
+    return expediteur
 
 
 @router.post("/me/upload-document")
 async def upload_document(
     file: UploadFile = File(...),
     document_type: str = Form("devanture"),  # "devanture" | "rccm"
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Uploader un document partenaire vers Cloudflare R2.
+    """Uploader un document expediteur vers Cloudflare R2.
 
     document_type: "devanture" (photo de la devanture) ou "rccm" (registre du commerce).
     """
@@ -192,15 +192,15 @@ async def upload_document(
     ext_default = "pdf" if content_type == "application/pdf" else "jpg"
     url = await storage_service.upload_document(
         file_data=content,
-        folder="partenaires",
+        folder="expediteurs",
         original_filename=file.filename or f"{document_type}.{ext_default}",
         content_type=content_type,
     )
 
     if document_type == "rccm":
-        partenaire.rccm_url = url
+        expediteur.rccm_url = url
     else:
-        partenaire.devanture_url = url
+        expediteur.devanture_url = url
 
     await db.commit()
     return {"message": "Document uploadé avec succès", "url": url, "document_type": document_type}

@@ -2,12 +2,12 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict
 from datetime import datetime
 from uuid import UUID
-from ..models.partenaire import TypePartenaire
+from ..models.expediteur import TypeExpediteur
 
 
-class PartenaireBase(BaseModel):
-    """Schéma de base pour un partenaire"""
-    type_partenaire: Optional[TypePartenaire] = Field(default=TypePartenaire.AUTRE)
+class ExpediteurBase(BaseModel):
+    """Schéma de base pour un expediteur"""
+    type_expediteur: Optional[TypeExpediteur] = Field(default=TypeExpediteur.AUTRE)
     nom: str = Field(..., min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
     adresse: str = Field(..., min_length=5, max_length=500)
@@ -15,10 +15,10 @@ class PartenaireBase(BaseModel):
     telephone_secondaire: Optional[str] = None
 
 
-class PartenaireCreate(PartenaireBase):
-    """Schéma pour créer un partenaire"""
+class ExpediteurCreate(ExpediteurBase):
+    """Schéma pour créer un expediteur"""
 
-    type_partenaire: TypePartenaire = Field(
+    type_expediteur: TypeExpediteur = Field(
         ...,
         description="Type d'activité (restaurant, pharmacie, etc.)",
     )
@@ -27,9 +27,9 @@ class PartenaireCreate(PartenaireBase):
     horaires: Optional[Dict] = None
 
 
-class PartenaireUpdate(BaseModel):
-    """Schéma pour mettre à jour un partenaire"""
-    type_partenaire: Optional[TypePartenaire] = None
+class ExpediteurUpdate(BaseModel):
+    """Schéma pour mettre à jour un expediteur"""
+    type_expediteur: Optional[TypeExpediteur] = None
     nom: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
     adresse: Optional[str] = Field(None, min_length=5, max_length=500)
@@ -41,8 +41,8 @@ class PartenaireUpdate(BaseModel):
     is_open: Optional[bool] = None
 
 
-class PartenaireResponse(PartenaireBase):
-    """Réponse partenaire"""
+class ExpediteurResponse(ExpediteurBase):
+    """Réponse expediteur"""
     id: UUID
     user_id: UUID
     latitude: float

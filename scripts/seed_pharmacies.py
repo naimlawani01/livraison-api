@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.database import async_session_maker
 from app.core.security import get_password_hash
-from app.models.partenaire import Partenaire, TypePartenaire
+from app.models.expediteur import Expediteur, TypeExpediteur
 from app.models.user import User, UserRole
 
 
@@ -27,7 +27,7 @@ async def seed_pharmacies():
         user1 = User(
             phone=phone1,
             password_hash=get_password_hash(pwd1),
-            role=UserRole.PARTENAIRE,
+            role=UserRole.EXPEDITEUR,
             is_verified=True,
         )
         session.add(user1)
@@ -37,7 +37,7 @@ async def seed_pharmacies():
         user2 = User(
             phone=phone2,
             password_hash=get_password_hash(pwd2),
-            role=UserRole.PARTENAIRE,
+            role=UserRole.EXPEDITEUR,
             is_verified=True,
         )
         session.add(user2)
@@ -46,9 +46,9 @@ async def seed_pharmacies():
         await session.refresh(user1)
         await session.refresh(user2)
 
-        pharma1 = Partenaire(
+        pharma1 = Expediteur(
             user_id=user1.id,
-            type_partenaire=TypePartenaire.PHARMACIE,
+            type_expediteur=TypeExpediteur.PHARMACIE,
             nom="Pharmacie Centrale Plus",
             description="Pharmacie de garde ouverte 24h/24. Dépôt d'ordonnance et produits grand public.",
             adresse="Avenue Principale, Centre-Ville",
@@ -61,9 +61,9 @@ async def seed_pharmacies():
         )
         session.add(pharma1)
 
-        pharma2 = Partenaire(
+        pharma2 = Expediteur(
             user_id=user2.id,
-            type_partenaire=TypePartenaire.PHARMACIE,
+            type_expediteur=TypeExpediteur.PHARMACIE,
             nom="Pharmacie de l'Espérance",
             description="Votre plateforme santé au quotidien.",
             adresse="Boulevard de la Lagune",

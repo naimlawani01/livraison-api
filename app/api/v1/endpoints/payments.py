@@ -20,13 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ....core.database import get_db
 from ....models.commande import Commande, CommandeStatus, ModePaiement
 from ....models.livreur import Livreur
-from ....models.partenaire import Partenaire
+from ....models.expediteur import Expediteur
 from ....models.wallet_transaction import WalletTransaction
 from ....models.credit_transaction import CreditTransaction
 from ....services import genius_pay_service, credit_service
 from ....services.genius_pay_service import GeniusPayError
 from ....services.matching_service import MatchingService
-from ....utils.dependencies import get_current_partenaire
+from ....utils.dependencies import get_current_expediteur
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,12 +37,12 @@ router = APIRouter()
 @router.post("/commandes/{commande_id}/relancer", status_code=status.HTTP_200_OK)
 async def relancer_paiement(
     commande_id: str,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Génère un nouveau lien de paiement GeniusPay pour une commande MOBILE_MONEY
-    dont le lien initial a expiré. Accessible uniquement par le partenaire propriétaire.
+    dont le lien initial a expiré. Accessible uniquement par le expediteur propriétaire.
     """
     q = select(Commande).where(Commande.id == commande_id)
     r = await db.execute(q)
@@ -50,7 +50,7 @@ async def relancer_paiement(
 
     if not commande:
         raise HTTPException(status_code=404, detail="Commande introuvable")
-    if str(commande.partenaire_id) != str(partenaire.id):
+    if str(commande.expediteur_id) != str(expediteur.id):
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     if commande.mode_paiement != ModePaiement.MOBILE_MONEY:
         raise HTTPException(status_code=400, detail="Cette commande n'est pas en mode Mobile Money")
@@ -61,7 +61,7 @@ async def relancer_paiement(
 
     # Idempotency : verrou Redis 60s pour éviter de générer plusieurs
     # références GeniusPay sur un double-clic ou un retry réseau. Si le
-    # même partenaire relance la même commande dans les 60s, on retourne
+    # même expediteur relance la même commande dans les 60s, on retourne
     # le lien existant sans rappeler GeniusPay.
     from ....core.redis import redis_client
     lock_key = f"relancer_lock:{commande_id}"
@@ -78,7 +78,7 @@ async def relancer_paiement(
     try:
         paiement = await genius_pay_service.initier_paiement(
             commande_id=str(commande.id),
-            partenaire_id=str(partenaire.id),
+            expediteur_id=str(expediteur.id),
             montant=commande.prix_propose,
             description=f"Livraison {commande.numero_commande}",
             nom_client=commande.contact_client_nom,
@@ -142,20 +142,20 @@ async def webhook_geniuspay(
     if event == "payment.success":
         # Cas 1 : recharge du Crédit d'un expéditeur (pas de commande liée)
         if metadata.get("type") == "credit_recharge":
-            partenaire_id = metadata.get("partenaire_id")
+            expediteur_id = metadata.get("expediteur_id")
             reference = data.get("reference")
             montant = data.get("amount") or metadata.get("montant")
-            if not partenaire_id or not montant:
-                logger.error("credit_recharge — partenaire_id/montant manquant (ref=%s)", reference)
+            if not expediteur_id or not montant:
+                logger.error("credit_recharge — expediteur_id/montant manquant (ref=%s)", reference)
                 return {"ok": False, "reason": "missing_credit_fields"}
 
-            # partenaire_id vient du JSON (string) → UUID validé (robuste, dialect-agnostic).
+            # expediteur_id vient du JSON (string) → UUID validé (robuste, dialect-agnostic).
             import uuid as _uuid
             try:
-                partenaire_id = _uuid.UUID(str(partenaire_id))
+                expediteur_id = _uuid.UUID(str(expediteur_id))
             except (ValueError, TypeError):
-                logger.error("credit_recharge — partenaire_id invalide: %s", partenaire_id)
-                return {"ok": False, "reason": "bad_partenaire_id"}
+                logger.error("credit_recharge — expediteur_id invalide: %s", expediteur_id)
+                return {"ok": False, "reason": "bad_expediteur_id"}
 
             # Idempotence : recharge déjà appliquée pour cette référence ?
             if reference:
@@ -170,11 +170,11 @@ async def webhook_geniuspay(
 
             try:
                 await credit_service.recharger(
-                    db, partenaire_id, float(montant),
+                    db, expediteur_id, float(montant),
                     description="Recharge Mobile Money",
                     geniuspay_reference=reference,
                 )
-                logger.info("credit_recharge — Crédit +%s GNF (partenaire=%s)", montant, partenaire_id)
+                logger.info("credit_recharge — Crédit +%s GNF (expediteur=%s)", montant, expediteur_id)
             except Exception as e:  # noqa: BLE001
                 logger.error("credit_recharge — échec application: %s", e)
                 return {"ok": False, "reason": "credit_apply_failed"}
@@ -203,18 +203,18 @@ async def webhook_geniuspay(
         commande.geniuspay_reference = data.get("reference", commande.geniuspay_reference)
         await db.commit()
 
-        # Récupérer le partenaire pour avoir ses coordonnées
-        q_p = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
+        # Récupérer le expediteur pour avoir ses coordonnées
+        q_p = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
         r_p = await db.execute(q_p)
-        partenaire: Optional[Partenaire] = r_p.scalar_one_or_none()
+        expediteur: Optional[Expediteur] = r_p.scalar_one_or_none()
 
-        if partenaire:
+        if expediteur:
             await MatchingService.diffuser_commande(
-                db, commande, partenaire.latitude, partenaire.longitude,
-                partenaire_nom=partenaire.nom,
+                db, commande, expediteur.latitude, expediteur.longitude,
+                expediteur_nom=expediteur.nom,
             )
         else:
-            logger.error("payment.success — partenaire introuvable pour commande %s", commande_id)
+            logger.error("payment.success — expediteur introuvable pour commande %s", commande_id)
 
         logger.info("payment.success — commande %s confirmée et diffusée", commande.numero_commande)
         return {"ok": True}

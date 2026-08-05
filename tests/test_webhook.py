@@ -40,15 +40,15 @@ def _stub_signature(monkeypatch):
 
 async def _creer_expediteur(session, credit=0.0):
     from app.models.user import User, UserRole
-    from app.models.partenaire import Partenaire
+    from app.models.expediteur import Expediteur
     user = User(
         id=uuid.uuid4(),
         phone=f"+224600{uuid.uuid4().int % 1000000:06d}",
-        role=UserRole.PARTENAIRE, is_verified=True,
+        role=UserRole.EXPEDITEUR, is_verified=True,
     )
     session.add(user)
     await session.flush()
-    p = Partenaire(
+    p = Expediteur(
         id=uuid.uuid4(), user_id=user.id, nom="Test", adresse="Conakry",
         latitude=9.5, longitude=-13.7, credit_solde=credit, is_verified=True,
     )
@@ -72,7 +72,7 @@ def _make_request(payload):
     return Request(scope, receive)
 
 
-def _recharge_payload(partenaire_id, montant, reference):
+def _recharge_payload(expediteur_id, montant, reference):
     return {
         "event": "payment.success",
         "data": {
@@ -80,7 +80,7 @@ def _recharge_payload(partenaire_id, montant, reference):
             "amount": montant,
             "metadata": {
                 "type": "credit_recharge",
-                "partenaire_id": str(partenaire_id),
+                "expediteur_id": str(expediteur_id),
                 "montant": montant,
             },
         },
@@ -108,13 +108,13 @@ class TestWebhookRecharge:
         # Appliqué UNE seule fois malgré le rejeu.
         assert await credit_service.credit_disponible(session, pid) == 50_000
 
-    async def test_partenaire_id_invalide_ne_crash_pas(self, session):
+    async def test_expediteur_id_invalide_ne_crash_pas(self, session):
         from app.api.v1.endpoints.payments import webhook_geniuspay
         payload = {
             "event": "payment.success",
             "data": {
                 "reference": "MTX-X", "amount": 50_000,
-                "metadata": {"type": "credit_recharge", "partenaire_id": "pas-un-uuid", "montant": 50_000},
+                "metadata": {"type": "credit_recharge", "expediteur_id": "pas-un-uuid", "montant": 50_000},
             },
         }
         res = await webhook_geniuspay(_make_request(payload), session)

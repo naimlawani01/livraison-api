@@ -2,8 +2,8 @@
 Endpoints pour le partage de localisation client.
 
 Flux :
-1. Le partenaire crée une commande → un location_token est généré
-2. Le partenaire envoie le lien (contenant le token) au client via WhatsApp/SMS
+1. Le expediteur crée une commande → un location_token est généré
+2. Le expediteur envoie le lien (contenant le token) au client via WhatsApp/SMS
 3. Le client ouvre le lien → page HTML qui demande sa position GPS
 4. Le client autorise → sa position est envoyée ici et sauvegardée
 """
@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field
 
 from ....core.database import get_db
 from ....models.commande import Commande
-from ....models.partenaire import Partenaire
-from ....utils.dependencies import get_current_partenaire
+from ....models.expediteur import Expediteur
+from ....utils.dependencies import get_current_expediteur
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ class GenerateLocationLinkResponse(BaseModel):
 @router.post("/commandes/{commande_id}/location-link", response_model=GenerateLocationLinkResponse)
 async def generate_location_link(
     commande_id: str,
-    partenaire: Partenaire = Depends(get_current_partenaire),
+    expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
     """Générer un lien de localisation pour une commande"""
@@ -50,7 +50,7 @@ async def generate_location_link(
     if not commande:
         raise HTTPException(status_code=404, detail="Commande non trouvée")
 
-    if str(commande.partenaire_id) != str(partenaire.id):
+    if str(commande.expediteur_id) != str(expediteur.id):
         raise HTTPException(status_code=403, detail="Accès non autorisé")
 
     if commande.location_token:
@@ -117,7 +117,7 @@ async def submit_location(
     import logging
     from ....core.config import settings
     from ....models.commande import CommandeStatus, ModePaiement
-    from ....models.partenaire import Partenaire
+    from ....models.expediteur import Expediteur
     from ....services.geolocation_service import GeolocationService
     from ....services.matching_service import MatchingService
 
@@ -149,13 +149,13 @@ async def submit_location(
     commande.location_shared_at = datetime.now(timezone.utc)
 
     # ── 2. Recalculer le prix selon distance + nature_colis ──────────────
-    partenaire_q = select(Partenaire).where(Partenaire.id == commande.partenaire_id)
-    partenaire_r = await db.execute(partenaire_q)
-    partenaire: Optional[Partenaire] = partenaire_r.scalar_one_or_none()
+    expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    expediteur_r = await db.execute(expediteur_q)
+    expediteur: Optional[Expediteur] = expediteur_r.scalar_one_or_none()
 
-    if partenaire and partenaire.latitude and partenaire.longitude:
+    if expediteur and expediteur.latitude and expediteur.longitude:
         distance_km = GeolocationService.calculer_distance(
-            (partenaire.latitude, partenaire.longitude),
+            (expediteur.latitude, expediteur.longitude),
             (data.latitude, data.longitude),
         )
         from ....services import pricing, credit_service
@@ -173,7 +173,7 @@ async def submit_location(
         # dont la commission a été réservée au plancher à la création).
         if commande.mode_paiement == ModePaiement.CASH:
             await credit_service.ajuster_commission(
-                db, commande.partenaire_id, ancienne_commission, tarif.commission,
+                db, commande.expediteur_id, ancienne_commission, tarif.commission,
                 commande_id=commande.id,
             )
 
@@ -191,7 +191,7 @@ async def submit_location(
             from ....services import genius_pay_service
             paiement = await genius_pay_service.initier_paiement(
                 commande_id=str(commande.id),
-                partenaire_id=str(commande.partenaire_id),
+                expediteur_id=str(commande.expediteur_id),
                 montant=commande.prix_propose,
                 description=f"Livraison {commande.numero_commande}",
                 nom_client=commande.contact_client_nom,
@@ -203,21 +203,21 @@ async def submit_location(
         except Exception as e:  # noqa: BLE001
             logger.error(f"GeniusPay initier_paiement échoué après partage: {e}")
             # Fallback : on diffuse en Cash-style si le paiement plante
-            if commande.status == CommandeStatus.CREEE and partenaire:
+            if commande.status == CommandeStatus.CREEE and expediteur:
                 await MatchingService.diffuser_commande(
-                    db, commande, partenaire.latitude, partenaire.longitude,
-                    partenaire_nom=partenaire.nom,
+                    db, commande, expediteur.latitude, expediteur.longitude,
+                    expediteur_nom=expediteur.nom,
                 )
 
     # ── 4. Diffuser la commande si Cash et pas déjà diffusée ───────────
     if (
         commande.mode_paiement == ModePaiement.CASH
         and commande.status == CommandeStatus.CREEE
-        and partenaire
+        and expediteur
     ):
         await MatchingService.diffuser_commande(
-            db, commande, partenaire.latitude, partenaire.longitude,
-            partenaire_nom=partenaire.nom,
+            db, commande, expediteur.latitude, expediteur.longitude,
+            expediteur_nom=expediteur.nom,
         )
 
     return {
@@ -294,7 +294,7 @@ def _location_html(token: str) -> str:
   <div id="step-share">
     <div class="icon">📍</div>
     <h1>Partagez votre position</h1>
-    <p>Le partenaire a besoin de votre position pour calculer le prix et vous livrer. Appuyez sur le bouton ci-dessous.</p>
+    <p>Le expediteur a besoin de votre position pour calculer le prix et vous livrer. Appuyez sur le bouton ci-dessous.</p>
     <button class="btn" id="shareBtn" onclick="shareLocation()">
       Partager ma position
     </button>
@@ -457,7 +457,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{safe_message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le partenaire pour obtenir un nouveau lien.</p>
+  <p>Ce lien n'est plus valide. Contactez le expediteur pour obtenir un nouveau lien.</p>
 </div>
 </body>
 </html>"""

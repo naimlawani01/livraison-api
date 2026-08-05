@@ -435,7 +435,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     """
     Endpoint WebSocket pour les mises à jour en temps réel
     
-    user_type: "partenaire", "livreur", "admin"
+    user_type: "expediteur", "livreur", "admin"
 
     Authentification (dans l'ordre de préférence) :
       1. Sous-protocole WS : le client offre ["bearer", "<jwt>"] → le token
@@ -444,7 +444,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
          déployées. À retirer une fois toutes les versions migrées.
     """
     # Valider user_type
-    _VALID_USER_TYPES = {"partenaire", "livreur", "admin"}
+    _VALID_USER_TYPES = {"expediteur", "livreur", "admin"}
     if user_type not in _VALID_USER_TYPES:
         await websocket.close(code=4003, reason="Type utilisateur invalide")
         return
@@ -510,7 +510,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
                     "status": "ok"
                 })
 
-            elif data.get("type") == "nouvelle_commande" and user_type == "partenaire":
+            elif data.get("type") == "nouvelle_commande" and user_type == "expediteur":
                 await manager.broadcast_to_livreurs({
                     "type": "nouvelle_commande",
                     "data": data.get("commande")
