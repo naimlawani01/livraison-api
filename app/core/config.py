@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     GENIUSPAY_WEBHOOK_SECRET: str = ""   # whsec_xxx
     GENIUSPAY_BASE_URL: str = "https://pay.genius.ci/api/v1/merchant"
     GENIUSPAY_WALLET_ID: str = ""        # UUID du wallet payout Sönaiya
+    # Devise des montants envoyés à GeniusPay. Les montants du produit sont en
+    # GNF (Guinée) → on DOIT envoyer "GNF", sinon GeniusPay applique son défaut
+    # XOF et traite p.ex. 10 000 GNF comme 10 000 XOF (~15× l'écart de change).
+    # Surchargeable par env si ouverture d'un autre marché (XOF, etc.).
+    GENIUSPAY_CURRENCY: str = "GNF"
     
     # Geolocation
     DEFAULT_SEARCH_RADIUS_KM: float = 5.0

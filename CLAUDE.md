@@ -29,7 +29,7 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
 - **Crédit (expéditeur)** : solde prépayé `partenaires.credit_solde` + journal `credit_transactions` (migration `018`). Se recharge via PSP (`POST /partenaires/me/credit/recharge` → webhook `payment.success` type `credit_recharge`). La **commission d'une course cash est débitée du Crédit à la création** (garde-fou : Crédit insuffisant → 400, rien créé), remboursée à l'annulation, ajustée au partage GPS.
 - **Gains (livreur)** : `livreur.solde_disponible` devient **positif uniquement** (courses Mobile Money + indemnités), retiré via `POST /livreurs/me/wallet/retrait`. **Plus de recharge ni de dette** côté livreur (course cash = payé cash par l'expéditeur, aucune écriture livreur).
 - Règles d'argent pures et testées dans `app/services/soldes.py` (le Crédit ne passe jamais sous zéro, les Gains restent positifs) ; service transactionnel `app/services/credit_service.py` (verrou `with_for_update`).
-- **Restant** : renommage `partenaire→expediteur` / `commande→course` ; fix payload **GNF** GeniusPay (cf. mémoire) ; endpoints admin Crédit ; apps mobiles.
+- **Restant** : renommage `partenaire→expediteur` / `commande→course` (cosmétique). ~~fix payload GNF~~ ✅ fait · ~~endpoints admin Crédit~~ ✅ fait · ~~apps mobiles~~ ✅ fait (design premium + Crédit/Gains).
 
 ## Key Environment Variables
 - `SECRET_KEY` — JWT signing secret
@@ -82,6 +82,7 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
 - **Sécurité — durcissements en place** (audit + correctifs) :
   - **Type de token enforced** : `get_current_user` refuse tout token dont `type != "access"` (un refresh token de 30 j ne peut PAS authentifier une requête API) ; `/auth/refresh` exige `type == "refresh"`.
   - **Uploads** : plafond `settings.MAX_UPLOAD_BYTES` (8 Mo, rejet 413 avant lecture en RAM) **+ validation des magic bytes** (`filetype`, on utilise le MIME réel, pas celui déclaré). Clé R2 = `{folder}/{uuid}.{ext}` avec ext sanitisée.
+  - **Documents sensibles servis en URL présignée** : les endpoints admin (`livreurs/en-attente`, `livreurs/{id}`, `partenaires/…`) ne renvoient plus l'URL publique permanente des pièces d'identité / docs véhicule / devantures, mais une **URL présignée temporaire** via `storage_service.signed_view_url(stored_url)` (dérive la clé, signe 1 h, cache-friendly). Le bucket R2 peut donc être privé ; fallback gracieux sur l'URL d'origine si la clé n'est pas dérivable.
   - **Code de livraison anti brute-force** : le PIN à 4 chiffres est limité à **5 tentatives / 15 min / commande** via un compteur Redis (`code_attempts:{id}`) dans `PATCH /commandes/{id}/statut` → TERMINEE (429 au blocage, reset au succès).
   - **En-têtes de sécurité** : middleware dans `main.py` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, **HSTS en prod** seulement).
   - **Rate-limit derrière proxy** : `start.sh` lance uvicorn avec `--proxy-headers --forwarded-allow-ips="*"` → slowapi compte par **vraie IP client** (sinon, derrière Railway, `get_remote_address` renvoie l'IP du proxy et le rate-limit devient global).
@@ -95,7 +96,7 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
 
 ## Services Layer (`app/services/`)
 - **`storage_service.py`**: Cloudflare R2 uploads. Driver docs go to `livreurs/{uuid}.{ext}`, merchant photos to `partenaires/{uuid}.{ext}`. Generates presigned URLs for admin review.
-- **`genius_pay_service.py`**: GeniusPay integration. `initier_paiement()` creates a checkout URL; `initier_payout()` sends driver withdrawals. Webhook verification uses HMAC-SHA256 (`timestamp.payload`) with 5-minute replay protection.
+- **`genius_pay_service.py`**: GeniusPay integration. `initier_paiement()` creates a checkout URL; `initier_payout()` sends driver withdrawals. **Devise = GNF** (`settings.GENIUSPAY_CURRENCY`, défaut `"GNF"`) envoyée explicitement sur checkout ET payout — sans ça GeniusPay applique XOF par défaut et surfacture ~15× (les montants produit sont en GNF). Le payout **normalise le provider** vers les valeurs canoniques GeniusPay (`_PROVIDER_ALIASES` : `mtn_money→mtn_momo`, etc.). Régression : `tests/test_geniuspay_payload.py`. Webhook verification uses HMAC-SHA256 (`timestamp.payload`) with 15-minute replay protection.
 - **`sms_service.py`**: PasseInfo SMS — OTP dispatch. Endpoint `POST /v1/message/single_message`, auth via headers `api_key` + `client_id`. Numéros au format `6XXXXXXXX` (sans indicatif).
 - **`notification_service.py`**: Firebase FCM — push notifications to mobile apps.
 

@@ -123,5 +123,26 @@ class StorageService:
         prefix = settings.R2_PUBLIC_URL.rstrip("/") + "/"
         return url[len(prefix):] if url.startswith(prefix) else None
 
+    def signed_view_url(self, stored_url: Optional[str], expires_in: int = 3600) -> Optional[str]:
+        """URL de consultation **temporaire** pour un document stocké.
+
+        Convertit l'URL publique enregistrée (`piece_identite_url`, `devanture_url`,
+        …) en URL présignée à durée limitée → les pièces d'identité / documents
+        sensibles ne sont plus servis via une URL publique permanente, mais via un
+        lien signé, borné dans le temps, généré à la demande pour l'admin
+        authentifié (le bucket R2 peut alors être privé).
+
+        Synchrone : `generate_presigned_url` est une signature locale (pas d'appel
+        réseau), utilisable directement dans les compréhensions des endpoints admin.
+        Fallback gracieux sur l'URL d'origine si la clé n'est pas dérivable ou si
+        R2 n'est pas configuré — l'admin voit toujours quelque chose.
+        """
+        if not stored_url:
+            return None
+        key = self._key_from_url(stored_url)
+        if not key:
+            return stored_url
+        return self.presigned_url(key, expires_in=expires_in) or stored_url
+
 
 storage_service = StorageService()

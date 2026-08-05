@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = settings.GENIUSPAY_BASE_URL
 
+# Alias de providers → valeurs canoniques GeniusPay (wave|pawapay|orange_money|
+# mtn_momo|moov_money). L'app/retrait envoie parfois `mtn_money`, `orange`, etc.
+_PROVIDER_ALIASES = {
+    "mtn_money": "mtn_momo",
+    "mtn": "mtn_momo",
+    "momo": "mtn_momo",
+    "orange": "orange_money",
+    "moov": "moov_money",
+}
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,12 +82,15 @@ async def initier_paiement(
 
     payload: dict = {
         "amount": int(montant),          # GeniusPay attend un entier
+        "currency": settings.GENIUSPAY_CURRENCY,  # GNF (Guinée) — cf. note ci-dessous
         "description": description[:500],
         "metadata": meta,
     }
     # Notes :
-    # - "currency" : GeniusPay accepte seulement XOF/EUR/USD, GNF non listé.
-    #   Le défaut XOF est appliqué côté GeniusPay.
+    # - "currency" : montants du produit en GNF → on envoie "GNF" explicitement.
+    #   GeniusPay couvre la Guinée (confirmé support). Sans devise, GeniusPay
+    #   applique son défaut XOF et surfacture ~15× (10 000 GNF traités comme
+    #   10 000 XOF). Surchargeable via GENIUSPAY_CURRENCY.
     # - "gateway"  : valeurs valides selon doc = wave|pawapay|orange_money|
     #   mtn_momo|moov_money. "cinetpay" n'est pas listé → on laisse vide
     #   pour que GeniusPay route via sa page checkout multi-providers.
@@ -195,6 +208,10 @@ async def initier_payout(
     if not settings.GENIUSPAY_WALLET_ID:
         raise GeniusPayError("GENIUSPAY_WALLET_ID non configuré")
 
+    # Normalise le nom du provider vers les valeurs canoniques GeniusPay
+    # (le checkout attend `mtn_momo`, mais l'app/retrait envoie `mtn_money`).
+    provider = _PROVIDER_ALIASES.get(provider, provider)
+
     payload = {
         "wallet_id": settings.GENIUSPAY_WALLET_ID,
         "recipient": {
@@ -207,7 +224,7 @@ async def initier_payout(
             "account": telephone,
         },
         "amount": int(montant),
-        "currency": "XOF",
+        "currency": settings.GENIUSPAY_CURRENCY,  # GNF (Guinée) — cf. initier_paiement
         "description": f"Retrait Sönaiya — livreur {livreur_id[:8]}",
         "metadata": {
             "livreur_id": livreur_id,
