@@ -23,10 +23,12 @@ from .config import settings
 
 
 def _key_func(request) -> str:
-    """Identifie un client pour le compteur.
+    """Identifie un client pour le compteur : son IP.
 
-    Stratégie : IP du client. Pour les déploiements derrière un reverse
-    proxy (Railway), slowapi lit `X-Forwarded-For` via `get_remote_address`.
+    `get_remote_address` lit `request.client.host`. Derrière le proxy Railway,
+    ce champ ne contient la VRAIE IP client que si uvicorn tourne avec
+    `--proxy-headers --forwarded-allow-ips=*` (cf. start.sh) — sinon c'est l'IP
+    du proxy et le rate-limit devient global. Ce flag est activé au démarrage.
     """
     return get_remote_address(request)
 

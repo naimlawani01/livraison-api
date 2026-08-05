@@ -146,9 +146,9 @@ class ConnectionManager:
                     # Exponential backoff capped à 60s
                     backoff = min(backoff * 2, 60)
 
-    async def connect(self, user_id: str, user_type: str, websocket: WebSocket):
+    async def connect(self, user_id: str, user_type: str, websocket: WebSocket, subprotocol=None):
         """Connecter un utilisateur localement au worker actuel"""
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         self.active_connections[user_id] = websocket
         
         if user_type == "livreur":
@@ -291,6 +291,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# En-têtes de sécurité HTTP (défense en profondeur).
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not settings.DEBUG:  # HSTS seulement en prod (HTTPS), pas sur localhost
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 # Créer le dossier uploads s'il n'existe pas
 Path("uploads/documents").mkdir(parents=True, exist_ok=True)
 
@@ -424,7 +436,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     Endpoint WebSocket pour les mises à jour en temps réel
     
     user_type: "partenaire", "livreur", "admin"
-    Authentification via query param : /ws/{user_id}/{user_type}?token=xxx
+
+    Authentification (dans l'ordre de préférence) :
+      1. Sous-protocole WS : le client offre ["bearer", "<jwt>"] → le token
+         reste HORS de l'URL (pas dans les logs). C'est la méthode sécurisée.
+      2. Query param `?token=xxx` : DÉPRÉCIÉ, conservé pour les apps déjà
+         déployées. À retirer une fois toutes les versions migrées.
     """
     # Valider user_type
     _VALID_USER_TYPES = {"partenaire", "livreur", "admin"}
@@ -432,8 +449,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
         await websocket.close(code=4003, reason="Type utilisateur invalide")
         return
 
-    # Vérifier le JWT avant d'accepter la connexion
-    token = websocket.query_params.get("token")
+    # Récupérer le token : sous-protocole (sécurisé) ou query param (legacy)
+    subprotocols = websocket.scope.get("subprotocols") or []
+    accepted_subprotocol = None
+    token = None
+    if len(subprotocols) >= 2 and subprotocols[0] == "bearer":
+        token = subprotocols[1]
+        accepted_subprotocol = "bearer"  # on doit renvoyer un sous-protocole offert
+    if not token:
+        token = websocket.query_params.get("token")  # repli legacy
+
     if not token:
         await websocket.close(code=4001, reason="Token manquant")
         return
@@ -441,6 +466,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
     try:
         from .core.security import decode_token
         payload = decode_token(token)
+        if payload.get("type") != "access":
+            await websocket.close(code=4001, reason="Type de token invalide")
+            return
         token_user_id = payload.get("sub")
         if token_user_id != user_id:
             await websocket.close(code=4003, reason="Token ne correspond pas")
@@ -449,7 +477,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
         await websocket.close(code=4001, reason="Token invalide")
         return
 
-    await manager.connect(user_id, user_type, websocket)
+    await manager.connect(user_id, user_type, websocket, subprotocol=accepted_subprotocol)
 
     # Idle timeout : si le client ne ping pas pendant `WS_IDLE_TIMEOUT_S`,
     # on considère la connexion comme morte (crash app, coupure réseau

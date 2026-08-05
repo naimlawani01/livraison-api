@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # app/services/pricing.py (TAUX_COMMISSION). Ce paramètre reste pour le code
     # legacy tant que les endpoints n'ont pas migré vers pricing.calculer_tarif.
     PLATFORM_COMMISSION_PERCENTAGE: float = 12.0
+
+    # Uploads — taille maximale d'un document (anti-DoS / abus de stockage R2).
+    MAX_UPLOAD_BYTES: int = 8 * 1024 * 1024  # 8 Mo
     
     # CORS
     CORS_ORIGINS: List[str] = [

@@ -149,6 +149,14 @@ async def webhook_geniuspay(
                 logger.error("credit_recharge — partenaire_id/montant manquant (ref=%s)", reference)
                 return {"ok": False, "reason": "missing_credit_fields"}
 
+            # partenaire_id vient du JSON (string) → UUID validé (robuste, dialect-agnostic).
+            import uuid as _uuid
+            try:
+                partenaire_id = _uuid.UUID(str(partenaire_id))
+            except (ValueError, TypeError):
+                logger.error("credit_recharge — partenaire_id invalide: %s", partenaire_id)
+                return {"ok": False, "reason": "bad_partenaire_id"}
+
             # Idempotence : recharge déjà appliquée pour cette référence ?
             if reference:
                 dup = await db.execute(

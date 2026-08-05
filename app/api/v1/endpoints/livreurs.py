@@ -299,7 +299,14 @@ async def upload_document(
     if content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Format non supporté. Utilisez une image (JPG, PNG, HEIC) ou un PDF.")
 
+    # Plafond de taille (anti-DoS) — rejette avant de charger en mémoire.
+    _max = settings.MAX_UPLOAD_BYTES
+    if file.size is not None and file.size > _max:
+        raise HTTPException(status_code=413, detail=f"Fichier trop volumineux (max {_max // (1024*1024)} Mo).")
+
     content = await file.read()
+    if len(content) > _max:
+        raise HTTPException(status_code=413, detail=f"Fichier trop volumineux (max {_max // (1024*1024)} Mo).")
 
     # Vérification des magic bytes — protège contre un fichier malveillant
     # renommé en .jpg/.pdf. Le content-type déclaré par le client est non fiable.

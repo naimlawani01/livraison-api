@@ -20,6 +20,14 @@ async def get_current_user(
     token = credentials.credentials
     payload = decode_token(token)
 
+    # Refuser les refresh tokens (valables 30 j) sur les endpoints protégés :
+    # seul un token de type "access" authentifie une requête API.
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Type de token invalide",
+        )
+
     jti = payload.get("jti")
     if jti and await is_token_blacklisted(jti):
         raise HTTPException(

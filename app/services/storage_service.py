@@ -51,6 +51,8 @@ class StorageService:
             raise RuntimeError("R2 non configuré — ajoutez R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY dans les variables d'environnement")
 
         ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "jpg"
+        # Sanitize : garder uniquement alphanum, borner la longueur (défense en profondeur).
+        ext = "".join(c for c in ext if c.isalnum())[:5] or "jpg"
         key = f"{folder}/{uuid.uuid4()}.{ext}"
 
         self._client.put_object(

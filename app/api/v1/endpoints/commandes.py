@@ -560,11 +560,25 @@ async def update_commande_status(
         pass  # Déjà en route
     elif nouveau_statut == CommandeStatus.TERMINEE:
         if commande.exige_code_livraison:
+            # Anti brute-force : le code n'a que 4 chiffres. On limite à 5 essais
+            # par 15 min et par commande, sinon un livreur malhonnête pourrait le
+            # deviner et confirmer une livraison non remise.
+            from ....core.redis import redis_client
+            _attempts_key = f"code_attempts:{commande.id}"
+            _attempts = int(await redis_client.get(_attempts_key) or 0)
+            if _attempts >= 5:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Trop de tentatives de code. Réessayez dans 15 minutes.",
+                )
             if not code_livraison or code_livraison != commande.code_livraison:
+                await redis_client.incr(_attempts_key)
+                await redis_client.expire(_attempts_key, 900)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Code de livraison invalide ou manquant"
                 )
+            await redis_client.delete(_attempts_key)  # succès → reset
         commande.livree_at = datetime.now(timezone.utc)
         livreur.nombre_courses_completees += 1
         livreur.total_gains += commande.montant_livreur  # gains totaux (cash + plateforme) — statistique
@@ -819,7 +833,15 @@ async def confirmer_paiement(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Seul le livreur assigné peut confirmer le paiement"
         )
-    
+
+    # Le Mobile Money est confirmé automatiquement par le webhook GeniusPay :
+    # cet endpoint ne sert qu'à la confirmation manuelle du CASH.
+    if commande.mode_paiement == ModePaiement.MOBILE_MONEY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le paiement Mobile Money est confirmé automatiquement."
+        )
+
     if commande.paiement_confirme == "oui":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
