@@ -21,7 +21,12 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Les tests tournent sur SQLite (aucun Postgres/Redis requis).
+      # Les tests tournent sur SQLite (leur propre moteur) — ces valeurs sont
+      # BIDON, jamais contactées. Elles servent seulement à satisfaire la
+      # validation Pydantic de Settings() au moment de l'import (DATABASE_URL et
+      # SECRET_KEY sont les seuls champs requis sans défaut). Aucun vrai secret :
+      # les vraies valeurs de prod vivent uniquement dans Railway.
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
       SECRET_KEY: ci-test-secret-key-not-used-in-prod
       ENVIRONMENT: test
 
