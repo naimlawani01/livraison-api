@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from ....utils.dependencies import get_current_user, get_current_livreur
 from ....services.storage_service import storage_service
 from ....services.notification_service import notification_service
-from ....models.commande import Commande, CommandeStatus
+from ....models.course import Course, CourseStatus
 from ....core.config import settings
 from haversine import haversine
 
@@ -195,28 +195,28 @@ async def update_disponibilite(
             logger.warning(f"Impossible de retirer le livreur de Redis GEO : {e}")
     else:
         # Le livreur vient de passer en ligne — lui notifier les courses déjà diffusées
-        # dans son rayon pour qu'il ne rate pas une commande créée pendant son absence.
+        # dans son rayon pour qu'il ne rate pas une course créée pendant son absence.
         if livreur.device_token and livreur.latitude and livreur.longitude:
             try:
                 result = await db.execute(
-                    select(Commande)
-                    .where(Commande.status == CommandeStatus.DIFFUSEE)
-                    .options(selectinload(Commande.expediteur))
+                    select(Course)
+                    .where(Course.status == CourseStatus.DIFFUSEE)
+                    .options(selectinload(Course.expediteur))
                 )
                 courses_en_attente = result.scalars().all()
                 pos_livreur = (livreur.latitude, livreur.longitude)
                 rayon = settings.MAX_SEARCH_RADIUS_KM
 
-                for commande in courses_en_attente:
-                    p = commande.expediteur
+                for course in courses_en_attente:
+                    p = course.expediteur
                     if p and p.latitude and p.longitude:
                         dist = haversine(pos_livreur, (p.latitude, p.longitude))
                         if dist <= rayon:
-                            await notification_service.notifier_nouvelle_commande(
+                            await notification_service.notifier_nouvelle_course(
                                 device_tokens=[livreur.device_token],
-                                numero_commande=commande.numero_commande,
+                                numero_course=course.numero_course,
                                 expediteur_nom=p.nom,
-                                prix=commande.prix_propose or 0,
+                                prix=course.prix_propose or 0,
                                 distance_km=round(dist, 1),
                             )
             except Exception as e:

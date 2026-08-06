@@ -88,7 +88,7 @@ async def delete_my_account(
 ):
     """Supprimer mon compte (droit à l’effacement RGPD)"""
     # Anonymiser les données personnelles plutôt que supprimer
-    # pour conserver l’historique des commandes
+    # pour conserver l’historique des courses
     expediteur.nom = "Compte supprimé"
     expediteur.email = None
     expediteur.description = None

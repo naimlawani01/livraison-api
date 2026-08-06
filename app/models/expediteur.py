@@ -65,7 +65,7 @@ class Expediteur(Base):
     
     # Relations
     user = relationship("User", backref="expediteur", uselist=False)
-    commandes = relationship("Commande", back_populates="expediteur", cascade="all, delete-orphan")
+    courses = relationship("Course", back_populates="expediteur", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Expediteur {self.nom} ({self.type_expediteur})>"

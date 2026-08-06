@@ -107,32 +107,32 @@ class NotificationService:
                 sent += 1
         return sent
     
-    async def notifier_nouvelle_commande(
+    async def notifier_nouvelle_course(
         self,
         device_tokens: List[str],
-        numero_commande: str,
+        numero_course: str,
         expediteur_nom: str,
         prix: float,
         distance_km: float
     ):
-        """Notifier les livreurs d'une nouvelle commande disponible"""
+        """Notifier les livreurs d'une nouvelle course disponible"""
         titre = f"Nouvelle course — {prix:.0f} FCFA"
         msg = f"{expediteur_nom} · à {distance_km:.1f} km"
-        data = {"type": "nouvelle_commande", "numero_commande": numero_commande}
+        data = {"type": "nouvelle_course", "numero_course": numero_course}
 
         count = await self.envoyer_a_plusieurs(device_tokens, titre, msg, data)
-        logger.info(f"Notification nouvelle commande envoyée à {count}/{len(device_tokens)} livreurs")
+        logger.info(f"Notification nouvelle course envoyée à {count}/{len(device_tokens)} livreurs")
     
-    async def notifier_commande_acceptee(
+    async def notifier_course_acceptee(
         self,
         device_token: str,
         livreur_nom: str,
-        numero_commande: str
+        numero_course: str
     ):
-        """Notifier le expediteur que sa commande a été acceptée"""
+        """Notifier le expediteur que sa course a été acceptée"""
         titre = "Course acceptée"
-        msg = f"{livreur_nom} a accepté la course #{numero_commande}"
-        data = {"type": "commande_acceptee", "numero_commande": numero_commande}
+        msg = f"{livreur_nom} a accepté la course #{numero_course}"
+        data = {"type": "course_acceptee", "numero_course": numero_course}
         
         await self.envoyer_notification_push(device_token, titre, msg, data)
     
@@ -140,18 +140,18 @@ class NotificationService:
         self,
         device_token: str,
         status: str,
-        numero_commande: str
+        numero_course: str
     ):
-        """Notifier un changement de statut de commande"""
+        """Notifier un changement de statut de course"""
         status_notifs = {
             "EN_RECUPERATION": ("Livreur en route", "Votre livreur se dirige vers le commerce"),
             "EN_LIVRAISON":    ("Livraison en cours", "Le livreur est en route vers le client"),
-            "TERMINEE":        ("Livraison terminée !", "La commande a bien été livrée"),
+            "TERMINEE":        ("Livraison terminée !", "La course a bien été livrée"),
             "ANNULEE":         ("Course annulée", "La livraison a été annulée"),
         }
 
         titre, msg = status_notifs.get(status, ("Mise à jour", f"Statut : {status}"))
-        data = {"type": "changement_status", "numero_commande": numero_commande, "status": status}
+        data = {"type": "changement_status", "numero_course": numero_course, "status": status}
 
         await self.envoyer_notification_push(device_token, titre, msg, data)
 

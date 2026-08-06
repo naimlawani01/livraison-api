@@ -74,7 +74,7 @@ async def get_credit_transactions(
                 "solde_avant": t.solde_avant,
                 "solde_apres": t.solde_apres,
                 "description": t.description,
-                "commande_id": str(t.commande_id) if t.commande_id else None,
+                "course_id": str(t.course_id) if t.course_id else None,
                 "statut": t.statut,
                 "created_at": t.created_at.isoformat(),
             }

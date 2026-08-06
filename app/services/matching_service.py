@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 import json
 import logging
 
-from ..models.commande import Commande, CommandeStatus
+from ..models.course import Course, CourseStatus
 from ..models.livreur import Livreur
-from ..schemas.commande import CommandeResponse
+from ..schemas.course import CourseResponse
 from ..services.geolocation_service import GeolocationService
 from ..services.notification_service import notification_service
 from ..core.config import settings
@@ -16,24 +16,24 @@ logger = logging.getLogger(__name__)
 
 
 class MatchingService:
-    """Service de matching entre commandes et livreurs"""
+    """Service de matching entre courses et livreurs"""
     
     @staticmethod
-    async def diffuser_commande(
+    async def diffuser_course(
         db: AsyncSession,
-        commande: Commande,
+        course: Course,
         expediteur_latitude: float,
         expediteur_longitude: float,
         expediteur_nom: str = "Commerce"
     ) -> int:
         """
-        Diffuser une commande aux livreurs proches.
-        La commande passe TOUJOURS en DIFFUSEE, même si aucun livreur n'est trouvé.
-        Les livreurs verront la commande quand ils se connecteront.
+        Diffuser une course aux livreurs proches.
+        La course passe TOUJOURS en DIFFUSEE, même si aucun livreur n'est trouvé.
+        Les livreurs verront la course quand ils se connecteront.
         
         Args:
             db: Session de base de données
-            commande: Commande à diffuser
+            course: Course à diffuser
             expediteur_latitude: Latitude du expediteur
             expediteur_longitude: Longitude du expediteur
             
@@ -41,8 +41,8 @@ class MatchingService:
             Nombre de livreurs notifiés
         """
         # Passer en DIFFUSEE immédiatement (visible pour tous les livreurs)
-        commande.status = CommandeStatus.DIFFUSEE
-        commande.diffusee_at = datetime.now(timezone.utc)
+        course.status = CourseStatus.DIFFUSEE
+        course.diffusee_at = datetime.now(timezone.utc)
         await db.commit()
         
         # Trouver les livreurs proches pour les notifier
@@ -55,20 +55,20 @@ class MatchingService:
         
         # Diffuser en Temps Réel via Redis PubSub (pour le WebSocket admin et livreurs)
         try:
-            commande_data = CommandeResponse.model_validate(commande).model_dump(mode='json')
+            course_data = CourseResponse.model_validate(course).model_dump(mode='json')
             await redis_client.publish("livraison_ws", json.dumps({
                 "target": "livreurs",
                 "payload": {
-                    "type": "nouvelle_commande",
-                    "data": commande_data
+                    "type": "nouvelle_course",
+                    "data": course_data
                 }
             }))
-            logger.info(f"Commande {commande.numero_commande} publiée sur Redis PubSub")
+            logger.info(f"Course {course.numero_course} publiée sur Redis PubSub")
         except Exception as e:
             logger.error(f"Erreur publication Redis: {e}")
             
         if not livreurs_proches:
-            logger.info(f"Commande {commande.numero_commande} diffusée (aucun livreur à proximité pour le FCM)")
+            logger.info(f"Course {course.numero_course} diffusée (aucun livreur à proximité pour le FCM)")
             return 0
         
         # Collecter les tokens pour notification push
@@ -79,37 +79,37 @@ class MatchingService:
         
         # Envoyer les notifications Push Firebase
         if device_tokens:
-            await notification_service.notifier_nouvelle_commande(
+            await notification_service.notifier_nouvelle_course(
                 device_tokens=device_tokens,
-                numero_commande=commande.numero_commande,
+                numero_course=course.numero_course,
                 expediteur_nom=expediteur_nom,
-                prix=commande.prix_propose,
+                prix=course.prix_propose,
                 distance_km=livreurs_proches[0][1] if livreurs_proches else 0
             )
         
-        logger.info(f"Commande {commande.numero_commande} diffusée à {len(livreurs_proches)} livreurs ({len(device_tokens)} notifiés)")
+        logger.info(f"Course {course.numero_course} diffusée à {len(livreurs_proches)} livreurs ({len(device_tokens)} notifiés)")
         return len(livreurs_proches)
     
     @staticmethod
-    async def accepter_commande(
+    async def accepter_course(
         db: AsyncSession,
-        commande: Commande,
+        course: Course,
         livreur: Livreur
     ) -> bool:
         """
-        Accepter une commande par un livreur
+        Accepter une course par un livreur
         
         Args:
             db: Session de base de données
-            commande: Commande à accepter
+            course: Course à accepter
             livreur: Livreur qui accepte
             
         Returns:
             True si succès, False sinon
         """
-        # Vérifier que la commande est disponible (CREEE ou DIFFUSEE)
-        if commande.status != CommandeStatus.DIFFUSEE:
-            logger.warning(f"Commande {commande.numero_commande} déjà acceptée ou invalide (status={commande.status})")
+        # Vérifier que la course est disponible (CREEE ou DIFFUSEE)
+        if course.status != CourseStatus.DIFFUSEE:
+            logger.warning(f"Course {course.numero_course} déjà acceptée ou invalide (status={course.status})")
             return False
         
         # Vérifier que le livreur est en ligne
@@ -119,10 +119,10 @@ class MatchingService:
         
         # Note: la vérification du nombre max de courses est faite dans l'endpoint
         
-        # Assigner la commande
-        commande.livreur_id = livreur.id
-        commande.status = CommandeStatus.ACCEPTEE
-        commande.acceptee_at = datetime.now(timezone.utc)
+        # Assigner la course
+        course.livreur_id = livreur.id
+        course.status = CourseStatus.ACCEPTEE
+        course.acceptee_at = datetime.now(timezone.utc)
         
         # Marquer le livreur comme en course
         livreur.is_en_course = True
@@ -131,7 +131,7 @@ class MatchingService:
         
         # Notifier le expediteur
         # Note: Implémenter la récupération du device_token du expediteur
-        logger.info(f"Commande {commande.numero_commande} acceptée par livreur {livreur.id}")
+        logger.info(f"Course {course.numero_course} acceptée par livreur {livreur.id}")
         
         return True
     

@@ -53,7 +53,7 @@ def _patch(monkeypatch):
 
 async def test_checkout_envoie_gnf():
     await gps.initier_paiement(
-        montant=10_000, description="Livraison", commande_id="c1", expediteur_id="p1",
+        montant=10_000, description="Livraison", course_id="c1", expediteur_id="p1",
     )
     assert _FakeClient.captured["currency"] == "GNF"
     assert _FakeClient.captured["amount"] == 10_000  # entier, pas de conversion

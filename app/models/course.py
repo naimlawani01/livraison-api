@@ -10,8 +10,8 @@ import enum
 from ..core.database import Base
 
 
-class CommandeStatus(str, enum.Enum):
-    """Statuts possibles d'une commande"""
+class CourseStatus(str, enum.Enum):
+    """Statuts possibles d'une course"""
     CREEE = "CREEE"
     DIFFUSEE = "DIFFUSEE"
     ACCEPTEE = "ACCEPTEE"
@@ -27,21 +27,21 @@ class ModePaiement(str, enum.Enum):
     MOBILE_MONEY = "MOBILE_MONEY"
 
 
-class Commande(Base):
-    """Modèle pour les commandes de livraison"""
-    __tablename__ = "commandes"
+class Course(Base):
+    """Modèle pour les courses de livraison"""
+    __tablename__ = "courses"
 
     # Indexes composites — voir migration 017 et CLAUDE.md backend.
     # Ces indexes accélèrent les queries fréquentes filtrant sur plusieurs
     # colonnes à la fois.
     __table_args__ = (
-        Index("ix_commandes_expediteur_status", "expediteur_id", "status"),
-        Index("ix_commandes_livreur_status", "livreur_id", "status"),
-        Index("ix_commandes_status_created", "status", "created_at"),
+        Index("ix_courses_expediteur_status", "expediteur_id", "status"),
+        Index("ix_courses_livreur_status", "livreur_id", "status"),
+        Index("ix_courses_status_created", "status", "created_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    numero_commande = Column(String(50), unique=True, nullable=False, index=True)
+    numero_course = Column(String(50), unique=True, nullable=False, index=True)
     
     # Relations
     expediteur_id = Column(UUID(as_uuid=True), ForeignKey("expediteurs.id", ondelete="CASCADE"), nullable=False)
@@ -91,7 +91,9 @@ class Commande(Base):
     nature_colis = Column(String(50), default="standard", nullable=False)
     
     # Statut
-    status = Column(SQLEnum(CommandeStatus), default=CommandeStatus.CREEE, nullable=False)
+    # name="commandestatus" : on garde le nom du TYPE enum Postgres d'origine
+    # (créé en migration 007) → renommage de classe sans toucher au type en base.
+    status = Column(SQLEnum(CourseStatus, name="commandestatus"), default=CourseStatus.CREEE, nullable=False)
     
     # Évaluation
     note_livreur = Column(Integer, nullable=True)  # 1 à 5
@@ -110,15 +112,15 @@ class Commande(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Relations
-    expediteur = relationship("Expediteur", back_populates="commandes")
-    livreur = relationship("Livreur", back_populates="commandes")
+    expediteur = relationship("Expediteur", back_populates="courses")
+    livreur = relationship("Livreur", back_populates="courses")
     
     def __repr__(self):
-        return f"<Commande {self.numero_commande} - {self.status}>"
+        return f"<Course {self.numero_course} - {self.status}>"
     
     @staticmethod
-    def generer_numero_commande() -> str:
-        """Générer un numéro de commande unique"""
+    def generer_numero_course() -> str:
+        """Générer un numéro de course unique"""
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         random_part = str(uuid.uuid4().hex[:6]).upper()

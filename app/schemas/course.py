@@ -2,12 +2,12 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from ..models.commande import CommandeStatus, ModePaiement
+from ..models.course import CourseStatus, ModePaiement
 from ..utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
 
 
-class CommandeBase(BaseModel):
-    """Schéma de base pour une commande"""
+class CourseBase(BaseModel):
+    """Schéma de base pour une course"""
     adresse_client: Optional[str] = Field(None, max_length=500)
     contact_client_nom: str = Field(..., min_length=2, max_length=255)
     contact_client_telephone: str = Field(..., description="Téléphone client guinéen")
@@ -15,7 +15,7 @@ class CommandeBase(BaseModel):
     description_colis: Optional[str] = Field(
         None,
         max_length=2000,
-        description="Nature ou description du colis / commande (pour le livreur)",
+        description="Nature ou description du colis / course (pour le livreur)",
     )
 
     @field_validator("contact_client_telephone", mode="before")
@@ -29,8 +29,8 @@ class CommandeBase(BaseModel):
             raise ValueError(str(e))
 
 
-class CommandeCreate(CommandeBase):
-    """Schéma pour créer une commande"""
+class CourseCreate(CourseBase):
+    """Schéma pour créer une course"""
     latitude_client: Optional[float] = Field(None, ge=-90, le=90)
     longitude_client: Optional[float] = Field(None, ge=-180, le=180)
     prix_propose: float = Field(..., gt=0, description="Prix proposé pour la livraison")
@@ -39,26 +39,26 @@ class CommandeCreate(CommandeBase):
     nature_colis: str = Field(default="standard", description="standard | alimentaire | fragile | documents | volumineux")
 
 
-class CommandeUpdate(BaseModel):
-    """Mise à jour d'une commande"""
-    status: CommandeStatus
+class CourseUpdate(BaseModel):
+    """Mise à jour d'une course"""
+    status: CourseStatus
 
 
-class CommandeAnnulation(BaseModel):
-    """Annulation d'une commande"""
+class CourseAnnulation(BaseModel):
+    """Annulation d'une course"""
     raison: str = Field(..., min_length=2, max_length=500, description="Raison de l'annulation")
 
 
-class CommandeEvaluation(BaseModel):
-    """Évaluation d'une commande"""
+class CourseEvaluation(BaseModel):
+    """Évaluation d'une course"""
     note_livreur: int = Field(..., ge=1, le=5)
     commentaire_livreur: Optional[str] = Field(None, max_length=1000)
 
 
-class CommandeResponse(CommandeBase):
-    """Réponse commande"""
+class CourseResponse(CourseBase):
+    """Réponse course"""
     id: UUID
-    numero_commande: str
+    numero_course: str
     expediteur_id: UUID
     livreur_id: Optional[UUID]
     latitude_client: Optional[float]
@@ -72,7 +72,7 @@ class CommandeResponse(CommandeBase):
     exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]
-    status: CommandeStatus
+    status: CourseStatus
     note_livreur: Optional[int]
     commentaire_livreur: Optional[str]
     location_token: Optional[str]
@@ -91,8 +91,8 @@ class CommandeResponse(CommandeBase):
         from_attributes = True
 
 
-class CommandeWithDetails(CommandeResponse):
-    """Commande avec détails expediteur et livreur"""
+class CourseWithDetails(CourseResponse):
+    """Course avec détails expediteur et livreur"""
     expediteur: Optional[dict] = None
     livreur: Optional[dict] = None
     code_livraison: Optional[str] = None
@@ -110,10 +110,10 @@ class ExpediteurInfo(BaseModel):
         from_attributes = True
 
 
-class CommandeDisponibleResponse(BaseModel):
-    """Commande disponible avec infos expediteur et distance depuis le livreur"""
+class CourseDisponibleResponse(BaseModel):
+    """Course disponible avec infos expediteur et distance depuis le livreur"""
     id: UUID
-    numero_commande: str
+    numero_course: str
     expediteur_id: UUID
     adresse_client: Optional[str] = None
     latitude_client: Optional[float] = None
@@ -127,7 +127,7 @@ class CommandeDisponibleResponse(BaseModel):
     montant_livreur: float
     distance_km: Optional[float] = None
     duree_estimee_minutes: Optional[int] = None
-    status: CommandeStatus
+    status: CourseStatus
     created_at: datetime
     mode_paiement: Optional[str] = "CASH"
     paiement_confirme: Optional[str] = "non"

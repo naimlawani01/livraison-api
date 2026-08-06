@@ -9,7 +9,7 @@ from ....core.security import get_password_hash
 from ....models.user import User, UserRole
 from ....models.expediteur import Expediteur, TypeExpediteur
 from ....models.livreur import Livreur
-from ....models.commande import Commande, CommandeStatus
+from ....models.course import Course, CourseStatus
 from ....models.wallet_transaction import WalletTransaction
 from ....models.credit_transaction import CreditTransaction
 from ....utils.dependencies import get_current_admin
@@ -255,33 +255,33 @@ async def get_platform_stats(
     livreurs_actifs_result = await db.execute(livreurs_actifs_query)
     livreurs_actifs = livreurs_actifs_result.scalar()
     
-    # Commandes totales
-    commandes_query = select(func.count(Commande.id))
-    commandes_result = await db.execute(commandes_query)
-    total_commandes = commandes_result.scalar()
+    # Courses totales
+    courses_query = select(func.count(Course.id))
+    courses_result = await db.execute(courses_query)
+    total_courses = courses_result.scalar()
     
-    # Commandes en cours
-    commandes_en_cours_query = select(func.count(Commande.id)).where(
-        Commande.status.in_([
-            CommandeStatus.DIFFUSEE,
-            CommandeStatus.ACCEPTEE,
-            CommandeStatus.EN_RECUPERATION,
-            CommandeStatus.EN_LIVRAISON
+    # Courses en cours
+    courses_en_cours_query = select(func.count(Course.id)).where(
+        Course.status.in_([
+            CourseStatus.DIFFUSEE,
+            CourseStatus.ACCEPTEE,
+            CourseStatus.EN_RECUPERATION,
+            CourseStatus.EN_LIVRAISON
         ])
     )
-    commandes_en_cours_result = await db.execute(commandes_en_cours_query)
-    commandes_en_cours = commandes_en_cours_result.scalar()
+    courses_en_cours_result = await db.execute(courses_en_cours_query)
+    courses_en_cours = courses_en_cours_result.scalar()
     
     # Revenus totaux (commissions)
-    revenus_query = select(func.sum(Commande.commission_plateforme)).where(
-        Commande.status == CommandeStatus.TERMINEE
+    revenus_query = select(func.sum(Course.commission_plateforme)).where(
+        Course.status == CourseStatus.TERMINEE
     )
     revenus_result = await db.execute(revenus_query)
     revenus_totaux = revenus_result.scalar() or 0.0
 
-    # Commandes terminées
-    terminees_query = select(func.count(Commande.id)).where(Commande.status == CommandeStatus.TERMINEE)
-    commandes_terminees = (await db.execute(terminees_query)).scalar() or 0
+    # Courses terminées
+    terminees_query = select(func.count(Course.id)).where(Course.status == CourseStatus.TERMINEE)
+    courses_terminees = (await db.execute(terminees_query)).scalar() or 0
 
     # Livreurs vérifiés
     verifies_query = select(func.count(Livreur.id)).where(Livreur.is_verified == True)
@@ -295,7 +295,7 @@ async def get_platform_stats(
     retraits_en_attente = (await db.execute(retraits_query)).scalar() or 0
 
     # Taux de complétion
-    taux_completion = round((commandes_terminees / total_commandes * 100), 1) if total_commandes > 0 else 0.0
+    taux_completion = round((courses_terminees / total_courses * 100), 1) if total_courses > 0 else 0.0
 
     result = {
         "total_utilisateurs": total_users,
@@ -303,9 +303,9 @@ async def get_platform_stats(
         "total_livreurs": total_livreurs,
         "livreurs_actifs": livreurs_actifs,
         "livreurs_verifies": livreurs_verifies,
-        "total_commandes": total_commandes,
-        "commandes_en_cours": commandes_en_cours,
-        "commandes_terminees": commandes_terminees,
+        "total_courses": total_courses,
+        "courses_en_cours": courses_en_cours,
+        "courses_terminees": courses_terminees,
         "taux_completion": taux_completion,
         "revenus_totaux": revenus_totaux,
         "retraits_en_attente": retraits_en_attente,
@@ -705,13 +705,13 @@ async def get_expediteur_detail(
     if not r:
         raise HTTPException(status_code=404, detail="Expediteur non trouvé")
 
-    commandes_count = await db.execute(
-        select(func.count(Commande.id)).where(
-            Commande.expediteur_id == r.id,
-            Commande.status == CommandeStatus.TERMINEE
+    courses_count = await db.execute(
+        select(func.count(Course.id)).where(
+            Course.expediteur_id == r.id,
+            Course.status == CourseStatus.TERMINEE
         )
     )
-    nombre_commandes_terminees = commandes_count.scalar() or 0
+    nombre_courses_terminees = courses_count.scalar() or 0
 
     return {
         "id": str(r.id),
@@ -728,7 +728,7 @@ async def get_expediteur_detail(
         "is_verified": r.is_verified,
         "note_moyenne": r.note_moyenne,
         "nombre_evaluations": r.nombre_evaluations,
-        "nombre_commandes_terminees": nombre_commandes_terminees,
+        "nombre_courses_terminees": nombre_courses_terminees,
         "devanture_url": storage_service.signed_view_url(r.devanture_url),
         "docs_complets": bool(r.devanture_url),
         "horaires": r.horaires,
@@ -736,29 +736,29 @@ async def get_expediteur_detail(
     }
 
 
-@router.get("/commandes/recentes", response_model=List[dict])
-async def get_commandes_recentes(
+@router.get("/courses/recentes", response_model=List[dict])
+async def get_courses_recentes(
     admin: User = Depends(get_current_admin),
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les commandes récentes avec infos expediteur et livreur"""
+    """Obtenir les courses récentes avec infos expediteur et livreur"""
     from sqlalchemy.orm import selectinload
 
     query = (
-        select(Commande)
+        select(Course)
         .options(
-            selectinload(Commande.expediteur).selectinload(Expediteur.user),
-            selectinload(Commande.livreur).selectinload(Livreur.user),
+            selectinload(Course.expediteur).selectinload(Expediteur.user),
+            selectinload(Course.livreur).selectinload(Livreur.user),
         )
-        .order_by(Commande.created_at.desc())
+        .order_by(Course.created_at.desc())
         .limit(limit)
     )
     result = await db.execute(query)
-    commandes = result.scalars().all()
+    courses = result.scalars().all()
 
     items = []
-    for c in commandes:
+    for c in courses:
         expediteur_nom = c.expediteur.nom if c.expediteur else None
         expediteur_phone = c.expediteur.user.phone if c.expediteur and c.expediteur.user else None
         livreur_nom = c.livreur.nom_complet if c.livreur else None
@@ -766,7 +766,7 @@ async def get_commandes_recentes(
 
         items.append({
             "id": str(c.id),
-            "numero_commande": c.numero_commande,
+            "numero_course": c.numero_course,
             "status": c.status,
             "prix_propose": c.prix_propose,
             "contact_client_nom": c.contact_client_nom,
@@ -1054,7 +1054,7 @@ async def get_expediteur_credit(
                 "solde_avant": t.solde_avant,
                 "solde_apres": t.solde_apres,
                 "description": t.description,
-                "commande_id": str(t.commande_id) if t.commande_id else None,
+                "course_id": str(t.course_id) if t.course_id else None,
                 "statut": t.statut,
                 "created_at": t.created_at.isoformat(),
             }
