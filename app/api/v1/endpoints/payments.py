@@ -1,7 +1,7 @@
 """
 Endpoints paiement GeniusPay.
 
-POST /payments/commandes/{id}/relancer
+POST /payments/courses/{id}/relancer
     → Regénère un lien de paiement si le premier a expiré.
 
 POST /payments/webhooks/geniuspay
@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
-from ....models.commande import Commande, CommandeStatus, ModePaiement
+from ....models.course import Course, CourseStatus, ModePaiement
 from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
 from ....models.wallet_transaction import WalletTransaction
@@ -34,67 +34,67 @@ router = APIRouter()
 
 # ── 1. Relancer un paiement expiré ───────────────────────────────────────────
 
-@router.post("/commandes/{commande_id}/relancer", status_code=status.HTTP_200_OK)
+@router.post("/courses/{course_id}/relancer", status_code=status.HTTP_200_OK)
 async def relancer_paiement(
-    commande_id: str,
+    course_id: str,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Génère un nouveau lien de paiement GeniusPay pour une commande MOBILE_MONEY
+    Génère un nouveau lien de paiement GeniusPay pour une course MOBILE_MONEY
     dont le lien initial a expiré. Accessible uniquement par le expediteur propriétaire.
     """
-    q = select(Commande).where(Commande.id == commande_id)
+    q = select(Course).where(Course.id == course_id)
     r = await db.execute(q)
-    commande: Optional[Commande] = r.scalar_one_or_none()
+    course: Optional[Course] = r.scalar_one_or_none()
 
-    if not commande:
-        raise HTTPException(status_code=404, detail="Commande introuvable")
-    if str(commande.expediteur_id) != str(expediteur.id):
+    if not course:
+        raise HTTPException(status_code=404, detail="Course introuvable")
+    if str(course.expediteur_id) != str(expediteur.id):
         raise HTTPException(status_code=403, detail="Accès non autorisé")
-    if commande.mode_paiement != ModePaiement.MOBILE_MONEY:
-        raise HTTPException(status_code=400, detail="Cette commande n'est pas en mode Mobile Money")
-    if commande.paiement_confirme == "oui":
+    if course.mode_paiement != ModePaiement.MOBILE_MONEY:
+        raise HTTPException(status_code=400, detail="Cette course n'est pas en mode Mobile Money")
+    if course.paiement_confirme == "oui":
         raise HTTPException(status_code=400, detail="Paiement déjà confirmé")
-    if commande.status not in (CommandeStatus.CREEE,):
-        raise HTTPException(status_code=400, detail=f"Impossible de relancer — statut: {commande.status}")
+    if course.status not in (CourseStatus.CREEE,):
+        raise HTTPException(status_code=400, detail=f"Impossible de relancer — statut: {course.status}")
 
     # Idempotency : verrou Redis 60s pour éviter de générer plusieurs
     # références GeniusPay sur un double-clic ou un retry réseau. Si le
-    # même expediteur relance la même commande dans les 60s, on retourne
+    # même expediteur relance la même course dans les 60s, on retourne
     # le lien existant sans rappeler GeniusPay.
     from ....core.redis import redis_client
-    lock_key = f"relancer_lock:{commande_id}"
+    lock_key = f"relancer_lock:{course_id}"
     lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=60)
 
-    if not lock_acquired and commande.geniuspay_reference and commande.geniuspay_checkout_url:
+    if not lock_acquired and course.geniuspay_reference and course.geniuspay_checkout_url:
         # Double-clic / retry — retourne le lien existant tel quel.
         return {
-            "reference": commande.geniuspay_reference,
-            "checkout_url": commande.geniuspay_checkout_url,
+            "reference": course.geniuspay_reference,
+            "checkout_url": course.geniuspay_checkout_url,
             "idempotent_replay": True,
         }
 
     try:
         paiement = await genius_pay_service.initier_paiement(
-            commande_id=str(commande.id),
+            course_id=str(course.id),
             expediteur_id=str(expediteur.id),
-            montant=commande.prix_propose,
-            description=f"Livraison {commande.numero_commande}",
-            nom_client=commande.contact_client_nom,
+            montant=course.prix_propose,
+            description=f"Livraison {course.numero_course}",
+            nom_client=course.contact_client_nom,
         )
     except GeniusPayError as e:
         # Libère le verrou si GeniusPay rejette, sinon on resterait bloqué 60s
         await redis_client.delete(lock_key)
         raise HTTPException(status_code=502, detail=str(e))
 
-    commande.geniuspay_reference = paiement.get("reference")
-    commande.geniuspay_checkout_url = paiement.get("checkout_url")
+    course.geniuspay_reference = paiement.get("reference")
+    course.geniuspay_checkout_url = paiement.get("checkout_url")
     await db.commit()
 
     return {
-        "reference": commande.geniuspay_reference,
-        "checkout_url": commande.geniuspay_checkout_url,
+        "reference": course.geniuspay_reference,
+        "checkout_url": course.geniuspay_checkout_url,
     }
 
 
@@ -110,7 +110,7 @@ async def webhook_geniuspay(
     Vérifie la signature HMAC avant tout traitement.
 
     Événements gérés :
-      - payment.success  → confirme le paiement + diffuse la commande
+      - payment.success  → confirme le paiement + diffuse la course
       - payment.failed   → log uniquement
       - payout.completed → marque le retrait livreur comme terminé
       - payout.failed    → rembourse le solde livreur
@@ -140,7 +140,7 @@ async def webhook_geniuspay(
 
     # ── payment.success ──────────────────────────────────────────────────────
     if event == "payment.success":
-        # Cas 1 : recharge du Crédit d'un expéditeur (pas de commande liée)
+        # Cas 1 : recharge du Crédit d'un expéditeur (pas de course liée)
         if metadata.get("type") == "credit_recharge":
             expediteur_id = metadata.get("expediteur_id")
             reference = data.get("reference")
@@ -181,64 +181,64 @@ async def webhook_geniuspay(
             return {"ok": True}
 
         # Cas 2 : paiement d'une course Mobile Money
-        commande_id = metadata.get("commande_id")
-        if not commande_id:
-            logger.error("payment.success sans commande_id dans metadata")
-            return {"ok": False, "reason": "missing_commande_id"}
+        course_id = metadata.get("course_id")
+        if not course_id:
+            logger.error("payment.success sans course_id dans metadata")
+            return {"ok": False, "reason": "missing_course_id"}
 
-        q = select(Commande).where(Commande.id == commande_id)
+        q = select(Course).where(Course.id == course_id)
         r = await db.execute(q)
-        commande: Optional[Commande] = r.scalar_one_or_none()
+        course: Optional[Course] = r.scalar_one_or_none()
 
-        if not commande:
-            logger.error("payment.success — commande %s introuvable", commande_id)
-            return {"ok": False, "reason": "commande_not_found"}
+        if not course:
+            logger.error("payment.success — course %s introuvable", course_id)
+            return {"ok": False, "reason": "course_not_found"}
 
-        if commande.paiement_confirme == "oui":
-            logger.info("payment.success — commande %s déjà confirmée, skip", commande_id)
+        if course.paiement_confirme == "oui":
+            logger.info("payment.success — course %s déjà confirmée, skip", course_id)
             return {"ok": True}
 
         # Confirmer le paiement
-        commande.paiement_confirme = "oui"
-        commande.geniuspay_reference = data.get("reference", commande.geniuspay_reference)
+        course.paiement_confirme = "oui"
+        course.geniuspay_reference = data.get("reference", course.geniuspay_reference)
         await db.commit()
 
         # Récupérer le expediteur pour avoir ses coordonnées
-        q_p = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        q_p = select(Expediteur).where(Expediteur.id == course.expediteur_id)
         r_p = await db.execute(q_p)
         expediteur: Optional[Expediteur] = r_p.scalar_one_or_none()
 
         if expediteur:
-            await MatchingService.diffuser_commande(
-                db, commande, expediteur.latitude, expediteur.longitude,
+            await MatchingService.diffuser_course(
+                db, course, expediteur.latitude, expediteur.longitude,
                 expediteur_nom=expediteur.nom,
             )
         else:
-            logger.error("payment.success — expediteur introuvable pour commande %s", commande_id)
+            logger.error("payment.success — expediteur introuvable pour course %s", course_id)
 
-        logger.info("payment.success — commande %s confirmée et diffusée", commande.numero_commande)
+        logger.info("payment.success — course %s confirmée et diffusée", course.numero_course)
         return {"ok": True}
 
     # ── payment.failed ───────────────────────────────────────────────────────
     elif event == "payment.failed":
-        commande_id = metadata.get("commande_id")
-        logger.warning("payment.failed — commande_id=%s ref=%s", commande_id, data.get("reference"))
+        course_id = metadata.get("course_id")
+        logger.warning("payment.failed — course_id=%s ref=%s", course_id, data.get("reference"))
         return {"ok": True}
 
     # ── payment.expired ──────────────────────────────────────────────────────
     elif event == "payment.expired":
-        commande_id = metadata.get("commande_id")
-        logger.warning("payment.expired — commande_id=%s", commande_id)
-        if commande_id:
-            q = select(Commande).where(Commande.id == commande_id)
+        course_id = metadata.get("course_id")
+        logger.warning("payment.expired — course_id=%s", course_id)
+        if course_id:
+            q = select(Course).where(Course.id == course_id)
             r = await db.execute(q)
-            commande: Optional[Commande] = r.scalar_one_or_none()
-            if commande and commande.status == CommandeStatus.CREEE and commande.paiement_confirme == "non":
-                commande.status = CommandeStatus.ANNULEE
-                commande.annulee_at = datetime.now(timezone.utc)
-                commande.raison_annulation = "Lien de paiement expiré"
+            course: Optional[Course] = r.scalar_one_or_none()
+            if course and course.status == CourseStatus.CREEE and course.paiement_confirme == "non":
+                course.status = CourseStatus.ANNULEE
+                course.annulee_at = datetime.now(timezone.utc)
+                course.raison_annulation = "Lien de paiement expiré"
                 await db.commit()
-                logger.info("payment.expired — commande %s annulée", commande_id)
+                logger.info("payment.expired — course %s annulée", course_id)
         return {"ok": True}
 
     # ── cashout.completed ────────────────────────────────────────────────────

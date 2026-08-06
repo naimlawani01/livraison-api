@@ -510,10 +510,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, user_type: str)
                     "status": "ok"
                 })
 
-            elif data.get("type") == "nouvelle_commande" and user_type == "expediteur":
+            elif data.get("type") == "nouvelle_course" and user_type == "expediteur":
                 await manager.broadcast_to_livreurs({
-                    "type": "nouvelle_commande",
-                    "data": data.get("commande")
+                    "type": "nouvelle_course",
+                    "data": data.get("course")
                 })
 
     except WebSocketDisconnect:

@@ -88,7 +88,7 @@ async def debiter_commission(
     expediteur_id,
     commission: float,
     *,
-    commande_id=None,
+    course_id=None,
     description: Optional[str] = None,
 ) -> CreditTransaction:
     """Débite la commission d'une course du Crédit de l'expéditeur.
@@ -107,7 +107,7 @@ async def debiter_commission(
         montant=commission,
         solde_avant=avant,
         solde_apres=apres,
-        commande_id=commande_id,
+        course_id=course_id,
         description=description,
         statut="complete",
     )
@@ -122,7 +122,7 @@ async def rembourser_commission(
     expediteur_id,
     montant: float,
     *,
-    commande_id=None,
+    course_id=None,
     description: Optional[str] = None,
 ) -> CreditTransaction:
     """Recrédite une commission au Crédit (course annulée). Le pendant de debiter_commission."""
@@ -137,7 +137,7 @@ async def rembourser_commission(
         montant=montant,
         solde_avant=avant,
         solde_apres=apres,
-        commande_id=commande_id,
+        course_id=course_id,
         description=description,
         statut="complete",
     )
@@ -153,7 +153,7 @@ async def ajuster_commission(
     ancienne: float,
     nouvelle: float,
     *,
-    commande_id=None,
+    course_id=None,
 ) -> None:
     """Ajuste le Crédit du delta quand le prix (donc la commission) est recalculé.
 
@@ -176,7 +176,7 @@ async def ajuster_commission(
         if montant < delta:
             logger.warning(
                 "Crédit insuffisant pour ajuster commission course=%s : manque=%s",
-                commande_id, round(delta - montant, 2),
+                course_id, round(delta - montant, 2),
             )
     else:
         montant = -delta
@@ -193,7 +193,7 @@ async def ajuster_commission(
         montant=montant,
         solde_avant=avant,
         solde_apres=apres,
-        commande_id=commande_id,
+        course_id=course_id,
         description="Ajustement commission (recalcul prix)",
         statut="complete",
     )

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
 from ....core.redis import redis_client
-from ....models.commande import Commande
+from ....models.course import Course
 from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
 from ....models.user import User
@@ -31,24 +31,24 @@ class TrackingLinkResponse(BaseModel):
     link: str
 
 
-@router.post("/commandes/{commande_id}/tracking-link", response_model=TrackingLinkResponse)
+@router.post("/courses/{course_id}/tracking-link", response_model=TrackingLinkResponse)
 async def generate_tracking_link(
-    commande_id: str,
+    course_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Commande).where(Commande.id == commande_id)
+    query = select(Course).where(Course.id == course_id)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
 
-    if not commande:
-        raise HTTPException(status_code=404, detail="Commande non trouvée")
+    if not course:
+        raise HTTPException(status_code=404, detail="Course non trouvée")
 
-    if commande.tracking_token:
-        token = commande.tracking_token
+    if course.tracking_token:
+        token = course.tracking_token
     else:
         token = secrets.token_hex(10)
-        commande.tracking_token = token
+        course.tracking_token = token
         await db.commit()
 
     return TrackingLinkResponse(tracking_token=token, link=f"/suivi/{token}")
@@ -57,29 +57,29 @@ async def generate_tracking_link(
 # ── Page HTML publique ──────────────────────────────────
 @router.get("/suivi/{token}", response_class=HTMLResponse)
 async def tracking_page(token: str, db: AsyncSession = Depends(get_db)):
-    query = select(Commande).where(Commande.tracking_token == token)
+    query = select(Course).where(Course.tracking_token == token)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
 
-    if not commande:
+    if not course:
         return HTMLResponse(content=_error_html("Lien invalide ou expiré"), status_code=404)
 
-    expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    expediteur_q = select(Expediteur).where(Expediteur.id == course.expediteur_id)
     expediteur_r = await db.execute(expediteur_q)
     expediteur_row = expediteur_r.scalar_one_or_none()
     expediteur_nom = expediteur_row.nom if expediteur_row else "Expediteur"
 
-    return HTMLResponse(content=_tracking_html(token, commande.numero_commande, expediteur_nom))
+    return HTMLResponse(content=_tracking_html(token, course.numero_course, expediteur_nom))
 
 
 # ── API JSON pour le polling ────────────────────────────
 @router.get("/suivi/{token}/status")
 async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
-    query = select(Commande).where(Commande.tracking_token == token)
+    query = select(Course).where(Course.tracking_token == token)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
 
-    if not commande:
+    if not course:
         raise HTTPException(status_code=404, detail="Lien invalide")
 
     livreur_nom = None
@@ -88,8 +88,8 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
     livreur_photo = None
     livreur_vehicule = None
     livreur_note = None
-    if commande.livreur_id:
-        liv_q = select(Livreur).where(Livreur.id == commande.livreur_id)
+    if course.livreur_id:
+        liv_q = select(Livreur).where(Livreur.id == course.livreur_id)
         liv_r = await db.execute(liv_q)
         livreur = liv_r.scalar_one_or_none()
         if livreur:
@@ -122,7 +122,7 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 
     # Position expediteur (point de départ)
     expediteur_pos = None
-    expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    expediteur_q = select(Expediteur).where(Expediteur.id == course.expediteur_id)
     expediteur_r = await db.execute(expediteur_q)
     expediteur_row = expediteur_r.scalar_one_or_none()
     if expediteur_row and expediteur_row.latitude and expediteur_row.longitude:
@@ -133,17 +133,17 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
 
     # Position client (point d'arrivée)
     client_pos = None
-    if commande.latitude_client is not None and commande.longitude_client is not None:
+    if course.latitude_client is not None and course.longitude_client is not None:
         client_pos = {
-            "latitude": float(commande.latitude_client),
-            "longitude": float(commande.longitude_client),
+            "latitude": float(course.latitude_client),
+            "longitude": float(course.longitude_client),
         }
 
     return {
-        "status": commande.status.value if hasattr(commande.status, 'value') else commande.status,
-        "numero_commande": commande.numero_commande,
-        "client_nom": commande.contact_client_nom,
-        "adresse_client": commande.adresse_client,
+        "status": course.status.value if hasattr(course.status, 'value') else course.status,
+        "numero_course": course.numero_course,
+        "client_nom": course.contact_client_nom,
+        "adresse_client": course.adresse_client,
         "livreur_nom": livreur_nom,
         "livreur_telephone": livreur_tel,
         "livreur_position": livreur_pos,
@@ -152,11 +152,11 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
         "livreur_note": livreur_note,
         "expediteur_position": expediteur_pos,
         "client_position": client_pos,
-        "created_at": commande.created_at.isoformat() if commande.created_at else None,
-        "acceptee_at": commande.acceptee_at.isoformat() if commande.acceptee_at else None,
-        "recuperee_at": commande.recuperee_at.isoformat() if commande.recuperee_at else None,
-        "livree_at": commande.livree_at.isoformat() if commande.livree_at else None,
-        "annulee_at": commande.annulee_at.isoformat() if commande.annulee_at else None,
+        "created_at": course.created_at.isoformat() if course.created_at else None,
+        "acceptee_at": course.acceptee_at.isoformat() if course.acceptee_at else None,
+        "recuperee_at": course.recuperee_at.isoformat() if course.recuperee_at else None,
+        "livree_at": course.livree_at.isoformat() if course.livree_at else None,
+        "annulee_at": course.annulee_at.isoformat() if course.annulee_at else None,
     }
 
 
@@ -495,7 +495,7 @@ def _tracking_html(token: str, numero: str, expediteur: str) -> str:
 <div id="mapEmpty" style="display:none;">
   <div class="icon">📍</div>
   <h2>En attente d'un livreur</h2>
-  <p>La position s'affichera ici dès qu'un livreur acceptera votre commande.</p>
+  <p>La position s'affichera ici dès qu'un livreur acceptera votre course.</p>
 </div>
 
 <!-- Top bar -->
@@ -523,7 +523,7 @@ def _tracking_html(token: str, numero: str, expediteur: str) -> str:
     <div class="eta-content">
       <div class="eta-label" id="etaLabel">Préparation</div>
       <div class="eta-value" id="etaValue">Votre livreur arrive bientôt</div>
-      <div class="eta-sub" id="etaSub">Commande chez {expediteur}</div>
+      <div class="eta-sub" id="etaSub">Course chez {expediteur}</div>
     </div>
   </div>
 
@@ -537,7 +537,7 @@ def _tracking_html(token: str, numero: str, expediteur: str) -> str:
     </div>
     <div class="step-label" id="stepLabel">
       <span class="icon">📋</span>
-      <span id="stepLabelText">Commande reçue</span>
+      <span id="stepLabelText">Course reçue</span>
     </div>
   </div>
 
@@ -555,7 +555,7 @@ def _tracking_html(token: str, numero: str, expediteur: str) -> str:
 
   <!-- Order info -->
   <div class="order-info">
-    <span>Commande</span>
+    <span>Course</span>
     <span class="order-num">{numero}</span>
   </div>
 </div>
@@ -579,7 +579,7 @@ let livreurDisplayPos = null;  // position interpolée affichée
 let animationFrameId = null;
 
 const STATUS_CONFIG = {{
-  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Commande reçue',           desc: 'Le expediteur prépare votre commande' }},
+  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Course reçue',           desc: 'Le expediteur prépare votre course' }},
   DIFFUSEE:        {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'À la recherche d\\'un livreur', desc: 'Nous cherchons le livreur le plus proche' }},
   ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers le expediteur' }},
   EN_RECUPERATION: {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur sur place',        desc: 'Récupération en cours' }},
@@ -764,7 +764,7 @@ function updateEtaHero(data, vehiculeEmoji) {{
     }}
   }}
   document.getElementById('etaValue').textContent = cfg.title;
-  document.getElementById('etaSub').textContent = cfg.desc || ('Commande chez ' + {expediteur_js});
+  document.getElementById('etaSub').textContent = cfg.desc || ('Course chez ' + {expediteur_js});
 }}
 
 function updateStepper(data) {{
@@ -816,7 +816,7 @@ function updateFinalBanner(data) {{
   const b = document.getElementById('finalBanner');
   if (data.status === 'ANNULEE') {{
     b.className = 'final-banner cancelled';
-    b.innerHTML = '<div class="big">❌</div><div class="label">Commande annulée</div><div class="sub">Contactez le expediteur pour plus d\\'informations</div>';
+    b.innerHTML = '<div class="big">❌</div><div class="label">Course annulée</div><div class="sub">Contactez le expediteur pour plus d\\'informations</div>';
     document.getElementById('etaHero').style.display = 'none';
   }} else if (data.status === 'TERMINEE') {{
     b.className = 'final-banner delivered';

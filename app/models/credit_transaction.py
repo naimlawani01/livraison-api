@@ -10,7 +10,7 @@ class CreditTransaction(Base):
 
     Miroir de WalletTransaction, mais pour le Crédit prépayé de l'expéditeur :
       - type 'recharge'   : entrée (PSP) — augmente le Crédit
-      - type 'commission' : sortie      — débitée à chaque course (liée à commande_id)
+      - type 'commission' : sortie      — débitée à chaque course (liée à course_id)
 
     Pas de relation ORM (comme WalletTransaction) : uniquement des FK, pour
     garder la configuration des mappers simple et sans back_populates.
@@ -29,7 +29,7 @@ class CreditTransaction(Base):
     solde_avant   = Column(Float, nullable=False)
     solde_apres   = Column(Float, nullable=False)
     description   = Column(Text, nullable=True)
-    commande_id   = Column(UUID(as_uuid=True), ForeignKey("commandes.id", ondelete="SET NULL"), nullable=True)
+    course_id   = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="SET NULL"), nullable=True)
     statut        = Column(String(20), nullable=False, default="complete")  # complete | en_attente | refuse
     geniuspay_reference = Column(String(100), nullable=True)
     created_at    = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))

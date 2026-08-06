@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .endpoints import auth, expediteurs, livreurs, commandes, admin, location, tracking, wallet, payments, credit
+from .endpoints import auth, expediteurs, livreurs, courses, admin, location, tracking, wallet, payments, credit
 
 api_router = APIRouter()
 
@@ -8,7 +8,7 @@ api_router.include_router(expediteurs.router, prefix="/expediteurs", tags=["Expe
 api_router.include_router(credit.router, prefix="/expediteurs", tags=["Crédit"])
 api_router.include_router(livreurs.router, prefix="/livreurs", tags=["Livreurs"])
 api_router.include_router(wallet.router, prefix="/livreurs", tags=["Wallet"])
-api_router.include_router(commandes.router, prefix="/commandes", tags=["Commandes"])
+api_router.include_router(courses.router, prefix="/courses", tags=["Courses"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Administration"])
 api_router.include_router(location.router, tags=["Location"])
 api_router.include_router(tracking.router, tags=["Tracking"])

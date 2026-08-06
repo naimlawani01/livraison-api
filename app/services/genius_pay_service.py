@@ -51,7 +51,7 @@ def _payout_headers() -> dict:
 
 async def initier_paiement(
     *,
-    commande_id: Optional[str] = None,
+    course_id: Optional[str] = None,
     expediteur_id: Optional[str] = None,
     montant: float,
     description: str,
@@ -63,7 +63,7 @@ async def initier_paiement(
     """
     Crée une transaction GeniusPay et retourne:
       - checkout_url  : URL à ouvrir dans l'app
-      - reference     : MTX-xxx à stocker sur la commande
+      - reference     : MTX-xxx à stocker sur la course
 
     Note GeniusPay (support) :
       - `currency` et `country` ne sont pas attendus → omis
@@ -73,8 +73,8 @@ async def initier_paiement(
         automatiquement à partir du numéro saisi et du pays
     """
     meta: dict = {}
-    if commande_id:
-        meta["commande_id"] = commande_id
+    if course_id:
+        meta["course_id"] = course_id
     if expediteur_id:
         meta["expediteur_id"] = expediteur_id
     if metadata:

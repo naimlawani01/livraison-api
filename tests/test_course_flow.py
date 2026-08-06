@@ -1,7 +1,7 @@
 """Tests d'intégration du flux de course — l'argent qui transite dans les endpoints.
 
-On appelle directement les fonctions d'endpoint (create_commande, update_commande_status,
-annuler_commande) avec une DB de test (SQLite par défaut, ou DATABASE_TEST_URL). Les
+On appelle directement les fonctions d'endpoint (create_course, update_course_status,
+annuler_course) avec une DB de test (SQLite par défaut, ou DATABASE_TEST_URL). Les
 appels externes (SMS PasseInfo) sont stubés ; sans position GPS, GeniusPay et la
 diffusion ne se déclenchent pas.
 
@@ -46,7 +46,7 @@ def _stub_sms(monkeypatch):
     async def _noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(sms_mod.sms_service, "envoyer_sms_commande", _noop)
+    monkeypatch.setattr(sms_mod.sms_service, "envoyer_sms_course", _noop)
 
 
 async def _creer_expediteur(session, credit=0.0):
@@ -90,8 +90,8 @@ async def _creer_livreur(session):
 
 
 def _payload(mode):
-    from app.schemas.commande import CommandeCreate
-    return CommandeCreate(
+    from app.schemas.course import CourseCreate
+    return CourseCreate(
         contact_client_nom="Client Test",
         contact_client_telephone="622334455",
         prix_propose=10000,  # ignoré (le backend recalcule), mais requis > 0 par le schéma
@@ -105,12 +105,12 @@ def _payload(mode):
 
 class TestCreation:
     async def test_cash_debite_la_commission_du_credit(self, session):
-        from app.api.v1.endpoints.commandes import create_commande
-        from app.models.commande import ModePaiement, CommandeStatus
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, CourseStatus
         from app.services import credit_service
         _, p = await _creer_expediteur(session, credit=50_000)
-        cmd = await create_commande(_payload(ModePaiement.CASH), p, session)
-        assert cmd.status == CommandeStatus.CREEE
+        cmd = await create_course(_payload(ModePaiement.CASH), p, session)
+        assert cmd.status == CourseStatus.CREEE
         assert cmd.commission_plateforme == 1_200      # 12 % de 10 000 (plancher)
         assert cmd.montant_livreur == 8_800
         assert await credit_service.credit_disponible(session, p.id) == 48_800
@@ -118,25 +118,25 @@ class TestCreation:
     async def test_credit_insuffisant_bloque_la_creation(self, session):
         from fastapi import HTTPException
         from sqlalchemy import select, func
-        from app.api.v1.endpoints.commandes import create_commande
-        from app.models.commande import Commande, ModePaiement
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import Course, ModePaiement
         from app.services import credit_service
         _, p = await _creer_expediteur(session, credit=500)   # < 1 200
         p_id = p.id  # capturé avant : le rollback interne expire l'objet p
         with pytest.raises(HTTPException) as exc:
-            await create_commande(_payload(ModePaiement.CASH), p, session)
+            await create_course(_payload(ModePaiement.CASH), p, session)
         assert exc.value.status_code == 400
         # Rien créé, Crédit intact (rollback)
         assert await credit_service.credit_disponible(session, p_id) == 500
-        n = (await session.execute(select(func.count()).select_from(Commande))).scalar()
+        n = (await session.execute(select(func.count()).select_from(Course))).scalar()
         assert n == 0
 
     async def test_momo_ne_touche_pas_le_credit(self, session):
-        from app.api.v1.endpoints.commandes import create_commande
-        from app.models.commande import ModePaiement
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement
         from app.services import credit_service
         _, p = await _creer_expediteur(session, credit=50_000)
-        await create_commande(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
         assert await credit_service.credit_disponible(session, p.id) == 50_000
 
 
@@ -144,32 +144,32 @@ class TestCreation:
 
 class TestCompletion:
     async def _course_en_livraison(self, session, mode):
-        from app.api.v1.endpoints.commandes import create_commande
-        from app.models.commande import CommandeStatus
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import CourseStatus
         _, p = await _creer_expediteur(session, credit=50_000)
         _, liv = await _creer_livreur(session)
-        cmd = await create_commande(_payload(mode), p, session)
+        cmd = await create_course(_payload(mode), p, session)
         cmd.livreur_id = liv.id
-        cmd.status = CommandeStatus.EN_LIVRAISON
+        cmd.status = CourseStatus.EN_LIVRAISON
         await session.commit()
         return cmd, liv
 
     async def test_momo_credite_les_gains(self, session):
-        from app.api.v1.endpoints.commandes import update_commande_status
-        from app.models.commande import ModePaiement, CommandeStatus
+        from app.api.v1.endpoints.courses import update_course_status
+        from app.models.course import ModePaiement, CourseStatus
         cmd, liv = await self._course_en_livraison(session, ModePaiement.MOBILE_MONEY)
         montant = cmd.montant_livreur
-        await update_commande_status(cmd.id, CommandeStatus.TERMINEE, None, liv, session)
+        await update_course_status(cmd.id, CourseStatus.TERMINEE, None, liv, session)
         await session.refresh(liv)
         assert liv.solde_disponible == montant   # Gains crédités
         assert liv.total_gains == montant
 
     async def test_cash_ne_credite_pas_le_livreur(self, session):
-        from app.api.v1.endpoints.commandes import update_commande_status
-        from app.models.commande import ModePaiement, CommandeStatus
+        from app.api.v1.endpoints.courses import update_course_status
+        from app.models.course import ModePaiement, CourseStatus
         cmd, liv = await self._course_en_livraison(session, ModePaiement.CASH)
         montant = cmd.montant_livreur
-        await update_commande_status(cmd.id, CommandeStatus.TERMINEE, None, liv, session)
+        await update_course_status(cmd.id, CourseStatus.TERMINEE, None, liv, session)
         await session.refresh(liv)
         assert liv.solde_disponible == 0          # payé cash → pas de crédit Gains
         assert liv.total_gains == montant         # stat lifetime comptée
@@ -179,14 +179,14 @@ class TestCompletion:
 
 class TestAnnulation:
     async def test_annulation_cash_rembourse_le_credit(self, session):
-        from app.api.v1.endpoints.commandes import create_commande, annuler_commande
-        from app.models.commande import ModePaiement, CommandeStatus
-        from app.schemas.commande import CommandeAnnulation
+        from app.api.v1.endpoints.courses import create_course, annuler_course
+        from app.models.course import ModePaiement, CourseStatus
+        from app.schemas.course import CourseAnnulation
         from app.services import credit_service
         user_p, p = await _creer_expediteur(session, credit=50_000)
-        cmd = await create_commande(_payload(ModePaiement.CASH), p, session)
+        cmd = await create_course(_payload(ModePaiement.CASH), p, session)
         assert await credit_service.credit_disponible(session, p.id) == 48_800
-        await annuler_commande(cmd.id, CommandeAnnulation(raison="test"), user_p, session)
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user_p, session)
         await session.refresh(cmd)
-        assert cmd.status == CommandeStatus.ANNULEE
+        assert cmd.status == CourseStatus.ANNULEE
         assert await credit_service.credit_disponible(session, p.id) == 50_000  # remboursé

@@ -12,7 +12,7 @@ Invariant garanti : ``commission + gain_livreur == prix``.
 
 Ce module est volontairement **pur** (aucune dépendance DB ni settings) afin de
 rester déterministe et testable sans environnement. Il remplace l'ancienne
-formule dispersée dans ``endpoints/commandes.py`` (commission 15 %, surge
+formule dispersée dans ``endpoints/courses.py`` (commission 15 %, surge
 horaire, 5 catégories de colis) que les endpoints migreront pour consommer ici.
 """
 from __future__ import annotations

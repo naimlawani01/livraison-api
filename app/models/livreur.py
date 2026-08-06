@@ -65,7 +65,7 @@ class Livreur(Base):
     
     # Relations
     user = relationship("User", backref="livreur", uselist=False)
-    commandes = relationship("Commande", back_populates="livreur")
+    courses = relationship("Course", back_populates="livreur")
     
     def __repr__(self):
         return f"<Livreur {self.nom_complet}>"

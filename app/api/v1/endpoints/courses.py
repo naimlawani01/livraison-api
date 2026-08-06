@@ -5,18 +5,18 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from ....core.database import get_db
 from ....core.config import settings
-from ....models.commande import Commande, CommandeStatus, ModePaiement
+from ....models.course import Course, CourseStatus, ModePaiement
 from ....models.expediteur import Expediteur
 from ....models.livreur import Livreur
 from ....models.user import User, UserRole
 from ....models.wallet_transaction import WalletTransaction
-from ....schemas.commande import (
-    CommandeCreate,
-    CommandeResponse,
-    CommandeEvaluation,
-    CommandeAnnulation,
-    CommandeWithDetails,
-    CommandeDisponibleResponse
+from ....schemas.course import (
+    CourseCreate,
+    CourseResponse,
+    CourseEvaluation,
+    CourseAnnulation,
+    CourseWithDetails,
+    CourseDisponibleResponse
 )
 from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 
 # ── Machine à états : transitions autorisées ──────────────────────────────────
 TRANSITIONS_VALIDES = {
-    CommandeStatus.ACCEPTEE:        [CommandeStatus.EN_RECUPERATION],
-    CommandeStatus.EN_RECUPERATION: [CommandeStatus.EN_LIVRAISON],
-    CommandeStatus.EN_LIVRAISON:    [CommandeStatus.TERMINEE],
+    CourseStatus.ACCEPTEE:        [CourseStatus.EN_RECUPERATION],
+    CourseStatus.EN_RECUPERATION: [CourseStatus.EN_LIVRAISON],
+    CourseStatus.EN_LIVRAISON:    [CourseStatus.TERMINEE],
 }
 
 
@@ -91,7 +91,7 @@ async def estimer_prix(
     if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des courses"
         )
 
     lat = data.get("latitude_client")
@@ -122,19 +122,19 @@ async def estimer_prix(
     }
 
 
-@router.post("/", response_model=CommandeResponse, status_code=status.HTTP_201_CREATED)
-async def create_commande(
-    commande_data: CommandeCreate,
+@router.post("/", response_model=CourseResponse, status_code=status.HTTP_201_CREATED)
+async def create_course(
+    course_data: CourseCreate,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Créer une nouvelle commande de livraison.
+    """Créer une nouvelle course de livraison.
 
     Le prix dépend de la position du client (distance) et de la nature du
     colis. Comme la position n'est généralement pas connue à la création :
 
     - Si position client fournie  → prix calculé tout de suite, paiement
-      GeniusPay créé immédiatement (si MM), commande diffusée
+      GeniusPay créé immédiatement (si MM), course diffusée
     - Si position absente          → prix de base provisoire, pas de
       paiement GeniusPay, pas de diffusion. Le client recevra un lien de
       partage de position. Le prix sera recalculé puis le paiement créé
@@ -143,12 +143,12 @@ async def create_commande(
     if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des commandes"
+            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des courses"
         )
 
     has_position = (
-        commande_data.latitude_client is not None
-        and commande_data.longitude_client is not None
+        course_data.latitude_client is not None
+        and course_data.longitude_client is not None
     )
 
     distance_km = None
@@ -157,15 +157,15 @@ async def create_commande(
     if has_position:
         distance_km = GeolocationService.calculer_distance(
             (expediteur.latitude, expediteur.longitude),
-            (commande_data.latitude_client, commande_data.longitude_client),
+            (course_data.latitude_client, course_data.longitude_client),
         )
         duree_estimee = GeolocationService.estimer_duree_trajet(distance_km)
         # Prix calculé côté backend (autorité) — jamais la valeur du client mobile.
-        tarif = pricing.calculer_tarif(distance_km, commande_data.nature_colis)
+        tarif = pricing.calculer_tarif(distance_km, course_data.nature_colis)
     else:
         # Position inconnue → prix provisoire au plancher. Il sera recalculé au
         # partage GPS du client (location.py) et le Crédit ajusté du delta.
-        tarif = pricing.calculer_tarif(0, commande_data.nature_colis)
+        tarif = pricing.calculer_tarif(0, course_data.nature_colis)
 
     prix_final = tarif.prix
     commission = tarif.commission
@@ -173,46 +173,46 @@ async def create_commande(
 
     # Code livraison crypto-safe (cf. ....core.security.generate_delivery_code)
     from ....core.security import generate_delivery_code
-    code_livraison = generate_delivery_code() if commande_data.exige_code_livraison else None
+    code_livraison = generate_delivery_code() if course_data.exige_code_livraison else None
 
-    commande = Commande(
-        numero_commande=Commande.generer_numero_commande(),
+    course = Course(
+        numero_course=Course.generer_numero_course(),
         expediteur_id=expediteur.id,
-        adresse_client=commande_data.adresse_client,
-        latitude_client=commande_data.latitude_client,
-        longitude_client=commande_data.longitude_client,
-        contact_client_nom=commande_data.contact_client_nom,
-        contact_client_telephone=commande_data.contact_client_telephone,
-        instructions_speciales=commande_data.instructions_speciales,
-        description_colis=commande_data.description_colis,
-        nature_colis=commande_data.nature_colis,
+        adresse_client=course_data.adresse_client,
+        latitude_client=course_data.latitude_client,
+        longitude_client=course_data.longitude_client,
+        contact_client_nom=course_data.contact_client_nom,
+        contact_client_telephone=course_data.contact_client_telephone,
+        instructions_speciales=course_data.instructions_speciales,
+        description_colis=course_data.description_colis,
+        nature_colis=course_data.nature_colis,
         prix_propose=prix_final,
         commission_plateforme=commission,
         montant_livreur=montant_livreur,
-        mode_paiement=commande_data.mode_paiement,
+        mode_paiement=course_data.mode_paiement,
         distance_km=distance_km,
         duree_estimee_minutes=duree_estimee,
-        status=CommandeStatus.CREEE,
+        status=CourseStatus.CREEE,
         tracking_token=secrets.token_hex(10),
         # Toujours générer un location_token — il sert même si la position
         # est connue (le client peut malgré tout consulter / corriger).
         location_token=secrets.token_hex(10),
-        exige_code_livraison=commande_data.exige_code_livraison,
+        exige_code_livraison=course_data.exige_code_livraison,
         code_livraison=code_livraison,
     )
 
-    db.add(commande)
-    await db.flush()  # obtient commande.id sans committer (FK du débit Crédit)
+    db.add(course)
+    await db.flush()  # obtient course.id sans committer (FK du débit Crédit)
 
     # Réserver la commission sur le Crédit de l'expéditeur — courses CASH uniquement.
     # (Le MoBILE MONEY est encaissé auprès du client, le Crédit n'est pas concerné.)
     # Le débit atomique EST le garde-fou : Crédit insuffisant → rien n'est créé.
-    if commande.mode_paiement == ModePaiement.CASH:
+    if course.mode_paiement == ModePaiement.CASH:
         try:
             await credit_service.debiter_commission(
                 db, expediteur.id, commission,
-                commande_id=commande.id,
-                description=f"Commission course #{commande.numero_commande}",
+                course_id=course.id,
+                description=f"Commission course #{course.numero_course}",
             )
         except soldes.SoldeInsuffisant:
             await db.rollback()
@@ -222,40 +222,40 @@ async def create_commande(
             )
     else:
         await db.commit()
-    await db.refresh(commande)
+    await db.refresh(course)
 
     checkout_url: Optional[str] = None
 
     if has_position:
         # Position connue → on peut traiter immédiatement
         if (
-            commande_data.mode_paiement == ModePaiement.MOBILE_MONEY
+            course_data.mode_paiement == ModePaiement.MOBILE_MONEY
             and settings.GENIUSPAY_API_KEY
         ):
             try:
                 from ....services import genius_pay_service
                 paiement = await genius_pay_service.initier_paiement(
-                    commande_id=str(commande.id),
+                    course_id=str(course.id),
                     expediteur_id=str(expediteur.id),
-                    montant=commande.prix_propose,
-                    description=f"Livraison {commande.numero_commande}",
-                    nom_client=commande.contact_client_nom,
+                    montant=course.prix_propose,
+                    description=f"Livraison {course.numero_course}",
+                    nom_client=course.contact_client_nom,
                 )
-                commande.geniuspay_reference = paiement.get("reference")
-                commande.geniuspay_checkout_url = paiement.get("checkout_url")
-                checkout_url = commande.geniuspay_checkout_url
+                course.geniuspay_reference = paiement.get("reference")
+                course.geniuspay_checkout_url = paiement.get("checkout_url")
+                checkout_url = course.geniuspay_checkout_url
                 await db.commit()
                 # MM : on attend le webhook payment.success pour diffuser
             except Exception as e:  # noqa: BLE001
                 logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
-                await MatchingService.diffuser_commande(
-                    db, commande, expediteur.latitude, expediteur.longitude,
+                await MatchingService.diffuser_course(
+                    db, course, expediteur.latitude, expediteur.longitude,
                     expediteur_nom=expediteur.nom,
                 )
         else:
             # Cash → diffuser immédiatement
-            await MatchingService.diffuser_commande(
-                db, commande, expediteur.latitude, expediteur.longitude,
+            await MatchingService.diffuser_course(
+                db, course, expediteur.latitude, expediteur.longitude,
                 expediteur_nom=expediteur.nom,
             )
     # else : position absente → on ne diffuse PAS, on attend que le client
@@ -270,66 +270,66 @@ async def create_commande(
     try:
         from ....services.sms_service import sms_service
         if has_position:
-            action_url = f"{settings.PUBLIC_BASE_URL}/suivi/{commande.tracking_token}"
+            action_url = f"{settings.PUBLIC_BASE_URL}/suivi/{course.tracking_token}"
         else:
-            action_url = f"{settings.PUBLIC_BASE_URL}/loc/{commande.location_token}"
-        await sms_service.envoyer_sms_commande(
-            telephone=commande.contact_client_telephone,
-            nom_client=commande.contact_client_nom,
-            numero_commande=commande.numero_commande,
+            action_url = f"{settings.PUBLIC_BASE_URL}/loc/{course.location_token}"
+        await sms_service.envoyer_sms_course(
+            telephone=course.contact_client_telephone,
+            nom_client=course.contact_client_nom,
+            numero_course=course.numero_course,
             expediteur_nom=expediteur.nom,
-            montant=commande.prix_propose if has_position else 0,
+            montant=course.prix_propose if has_position else 0,
             tracking_url=action_url,
             checkout_url=checkout_url,
             position_required=not has_position,
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"SMS commande {commande.numero_commande} non envoyé : {e}")
+        logger.warning(f"SMS course {course.numero_course} non envoyé : {e}")
 
-    await db.refresh(commande)
-    return commande
+    await db.refresh(course)
+    return course
 
 
 @router.get("/me")
-async def get_my_commandes(
+async def get_my_courses(
     expediteur: Expediteur = Depends(get_current_expediteur),
     status_filter: str = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir mes commandes (expediteur) — paginé"""
-    base = select(Commande).where(Commande.expediteur_id == expediteur.id)
+    """Obtenir mes courses (expediteur) — paginé"""
+    base = select(Course).where(Course.expediteur_id == expediteur.id)
     
     if status_filter:
-        base = base.where(Commande.status == status_filter)
+        base = base.where(Course.status == status_filter)
     
     # Total
     count_q = select(func.count()).select_from(base.subquery())
     total = (await db.execute(count_q)).scalar() or 0
     
     # Page
-    query = base.order_by(Commande.created_at.desc()).offset((page - 1) * limit).limit(limit)
+    query = base.order_by(Course.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(query)
-    commandes = result.scalars().all()
+    courses = result.scalars().all()
     
     return {
         "total": total,
         "page": page,
         "pages": (total + limit - 1) // limit,
-        "commandes": [CommandeResponse.model_validate(c).model_dump() for c in commandes],
+        "courses": [CourseResponse.model_validate(c).model_dump() for c in courses],
     }
 
 
-@router.get("/livreur/disponibles", response_model=List[CommandeDisponibleResponse])
-async def get_commandes_disponibles(
+@router.get("/livreur/disponibles", response_model=List[CourseDisponibleResponse])
+async def get_courses_disponibles(
     lat: Optional[float] = Query(None, description="Latitude du livreur"),
     lon: Optional[float] = Query(None, description="Longitude du livreur"),
     rayon: float = Query(10.0, description="Rayon de recherche en km"),
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les commandes disponibles à proximité du livreur"""
+    """Obtenir les courses disponibles à proximité du livreur"""
     if not livreur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -348,16 +348,16 @@ async def get_commandes_disponibles(
 
     # JOIN unique au lieu de N+1 requêtes
     query = (
-        select(Commande, Expediteur)
-        .join(Expediteur, Commande.expediteur_id == Expediteur.id)
-        .where(Commande.status == CommandeStatus.DIFFUSEE)
-        .order_by(Commande.created_at.desc())
+        select(Course, Expediteur)
+        .join(Expediteur, Course.expediteur_id == Expediteur.id)
+        .where(Course.status == CourseStatus.DIFFUSEE)
+        .order_by(Course.created_at.desc())
     )
     result = await db.execute(query)
     rows = result.all()
 
-    commandes_proches = []
-    for commande, expediteur in rows:
+    courses_proches = []
+    for course, expediteur in rows:
         distance_livreur = None
         duree_livreur = None
 
@@ -370,27 +370,27 @@ async def get_commandes_disponibles(
                 continue
             duree_livreur = GeolocationService.estimer_duree_trajet(distance_livreur)
 
-        commandes_proches.append(CommandeDisponibleResponse(
-            id=commande.id,
-            numero_commande=commande.numero_commande,
-            expediteur_id=commande.expediteur_id,
-            adresse_client=commande.adresse_client,
-            latitude_client=commande.latitude_client,
-            longitude_client=commande.longitude_client,
-            contact_client_nom=commande.contact_client_nom,
-            contact_client_telephone=commande.contact_client_telephone,
-            instructions_speciales=commande.instructions_speciales,
-            description_colis=commande.description_colis,
-            prix_propose=commande.prix_propose,
-            commission_plateforme=commande.commission_plateforme,
-            montant_livreur=commande.montant_livreur,
-            distance_km=commande.distance_km,
-            duree_estimee_minutes=commande.duree_estimee_minutes,
-            status=commande.status,
-            created_at=commande.created_at,
-            mode_paiement=commande.mode_paiement,
-            paiement_confirme=commande.paiement_confirme,
-            exige_code_livraison=commande.exige_code_livraison,
+        courses_proches.append(CourseDisponibleResponse(
+            id=course.id,
+            numero_course=course.numero_course,
+            expediteur_id=course.expediteur_id,
+            adresse_client=course.adresse_client,
+            latitude_client=course.latitude_client,
+            longitude_client=course.longitude_client,
+            contact_client_nom=course.contact_client_nom,
+            contact_client_telephone=course.contact_client_telephone,
+            instructions_speciales=course.instructions_speciales,
+            description_colis=course.description_colis,
+            prix_propose=course.prix_propose,
+            commission_plateforme=course.commission_plateforme,
+            montant_livreur=course.montant_livreur,
+            distance_km=course.distance_km,
+            duree_estimee_minutes=course.duree_estimee_minutes,
+            status=course.status,
+            created_at=course.created_at,
+            mode_paiement=course.mode_paiement,
+            paiement_confirme=course.paiement_confirme,
+            exige_code_livraison=course.exige_code_livraison,
             expediteur_nom=expediteur.nom,
             expediteur_adresse=expediteur.adresse,
             expediteur_latitude=expediteur.latitude,
@@ -399,9 +399,9 @@ async def get_commandes_disponibles(
             duree_livreur_minutes=duree_livreur,
         ))
 
-    commandes_proches.sort(key=lambda c: c.distance_livreur_km or 999)
+    courses_proches.sort(key=lambda c: c.distance_livreur_km or 999)
 
-    return commandes_proches
+    return courses_proches
 
 
 @router.get("/livreur/mes-courses")
@@ -413,56 +413,56 @@ async def get_mes_courses(
     db: AsyncSession = Depends(get_db)
 ):
     """Obtenir mes courses (livreur) — paginé"""
-    base = select(Commande).where(Commande.livreur_id == livreur.id)
+    base = select(Course).where(Course.livreur_id == livreur.id)
     
     if status_filter:
-        base = base.where(Commande.status == status_filter)
+        base = base.where(Course.status == status_filter)
     
     # Total
     count_q = select(func.count()).select_from(base.subquery())
     total = (await db.execute(count_q)).scalar() or 0
     
     # Page
-    query = base.order_by(Commande.created_at.desc()).offset((page - 1) * limit).limit(limit)
+    query = base.order_by(Course.created_at.desc()).offset((page - 1) * limit).limit(limit)
     result = await db.execute(query)
-    commandes = result.scalars().all()
+    courses = result.scalars().all()
     
     return {
         "total": total,
         "page": page,
         "pages": (total + limit - 1) // limit,
-        "commandes": [CommandeResponse.model_validate(c).model_dump() for c in commandes],
+        "courses": [CourseResponse.model_validate(c).model_dump() for c in courses],
     }
 
 
-@router.post("/{commande_id}/accepter", response_model=CommandeResponse)
-async def accepter_commande(
-    commande_id: str,
+@router.post("/{course_id}/accepter", response_model=CourseResponse)
+async def accepter_course(
+    course_id: str,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Accepter une commande (livreur)"""
+    """Accepter une course (livreur)"""
     if not livreur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Votre compte doit être vérifié par un administrateur pour accepter des courses"
         )
 
-    query = select(Commande).where(Commande.id == commande_id)
+    query = select(Course).where(Course.id == course_id)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée"
+            detail="Course non trouvée"
         )
     
     # Vérifications avec messages clairs
-    if commande.status not in (CommandeStatus.CREEE, CommandeStatus.DIFFUSEE):
+    if course.status not in (CourseStatus.CREEE, CourseStatus.DIFFUSEE):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cette commande a déjà été prise par un autre livreur"
+            detail="Cette course a déjà été prise par un autre livreur"
         )
     
     if not livreur.is_disponible:
@@ -476,10 +476,10 @@ async def accepter_commande(
     # est réglé en cash par l'expéditeur — il n'a aucune avance à faire.
 
     # Compter les courses actives du livreur
-    active_statuses = [CommandeStatus.ACCEPTEE, CommandeStatus.EN_RECUPERATION, CommandeStatus.EN_LIVRAISON]
+    active_statuses = [CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON]
     count_query = select(func.count()).where(
-        Commande.livreur_id == livreur.id,
-        Commande.status.in_(active_statuses)
+        Course.livreur_id == livreur.id,
+        Course.status.in_(active_statuses)
     )
     count_result = await db.execute(count_query)
     nb_courses_actives = count_result.scalar() or 0
@@ -491,87 +491,87 @@ async def accepter_commande(
             detail=f"Vous avez déjà {nb_courses_actives} course{'s' if nb_courses_actives > 1 else ''} en cours (max {max_courses}). Terminez-en une pour en accepter une nouvelle."
         )
     
-    # Accepter la commande
-    success = await MatchingService.accepter_commande(db, commande, livreur)
+    # Accepter la course
+    success = await MatchingService.accepter_course(db, course, livreur)
     
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Impossible d'accepter cette commande"
+            detail="Impossible d'accepter cette course"
         )
     
-    await db.refresh(commande)
+    await db.refresh(course)
     
-    # Notifier le expediteur que sa commande a été acceptée
+    # Notifier le expediteur que sa course a été acceptée
     try:
-        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_query = select(Expediteur).where(Expediteur.id == course.expediteur_id)
         expediteur_result = await db.execute(expediteur_query)
         expediteur_notif = expediteur_result.scalar_one_or_none()
         if expediteur_notif:
             token = await _get_user_device_token(db, expediteur_notif.user_id)
             if token:
-                await notification_service.notifier_commande_acceptee(
+                await notification_service.notifier_course_acceptee(
                     device_token=token,
                     livreur_nom=livreur.nom_complet,
-                    numero_commande=commande.numero_commande,
+                    numero_course=course.numero_course,
                 )
     except Exception as e:
         logger.warning(f"Notification acceptation échouée: {e}")
     
-    return commande
+    return course
 
 
-@router.patch("/{commande_id}/statut", response_model=CommandeResponse)
-async def update_commande_status(
-    commande_id: str,
-    nouveau_statut: CommandeStatus,
+@router.patch("/{course_id}/statut", response_model=CourseResponse)
+async def update_course_status(
+    course_id: str,
+    nouveau_statut: CourseStatus,
     code_livraison: Optional[str] = None,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Mettre à jour le statut d'une commande (livreur) — transitions validées"""
-    query = select(Commande).where(
-        Commande.id == commande_id,
-        Commande.livreur_id == livreur.id
+    """Mettre à jour le statut d'une course (livreur) — transitions validées"""
+    query = select(Course).where(
+        Course.id == course_id,
+        Course.livreur_id == livreur.id
     )
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée"
+            detail="Course non trouvée"
         )
     
     # Valider la transition d'état
-    allowed = TRANSITIONS_VALIDES.get(commande.status, [])
+    allowed = TRANSITIONS_VALIDES.get(course.status, [])
     if nouveau_statut not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Transition invalide : {commande.status.value} → {nouveau_statut.value}. "
+            detail=f"Transition invalide : {course.status.value} → {nouveau_statut.value}. "
                    f"Transitions possibles : {[s.value for s in allowed]}"
         )
     
-    commande.status = nouveau_statut
+    course.status = nouveau_statut
     
-    if nouveau_statut == CommandeStatus.EN_RECUPERATION:
-        commande.recuperee_at = datetime.now(timezone.utc)
-    elif nouveau_statut == CommandeStatus.EN_LIVRAISON:
+    if nouveau_statut == CourseStatus.EN_RECUPERATION:
+        course.recuperee_at = datetime.now(timezone.utc)
+    elif nouveau_statut == CourseStatus.EN_LIVRAISON:
         pass  # Déjà en route
-    elif nouveau_statut == CommandeStatus.TERMINEE:
-        if commande.exige_code_livraison:
+    elif nouveau_statut == CourseStatus.TERMINEE:
+        if course.exige_code_livraison:
             # Anti brute-force : le code n'a que 4 chiffres. On limite à 5 essais
-            # par 15 min et par commande, sinon un livreur malhonnête pourrait le
+            # par 15 min et par course, sinon un livreur malhonnête pourrait le
             # deviner et confirmer une livraison non remise.
             from ....core.redis import redis_client
-            _attempts_key = f"code_attempts:{commande.id}"
+            _attempts_key = f"code_attempts:{course.id}"
             _attempts = int(await redis_client.get(_attempts_key) or 0)
             if _attempts >= 5:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Trop de tentatives de code. Réessayez dans 15 minutes.",
                 )
-            if not code_livraison or code_livraison != commande.code_livraison:
+            if not code_livraison or code_livraison != course.code_livraison:
                 await redis_client.incr(_attempts_key)
                 await redis_client.expire(_attempts_key, 900)
                 raise HTTPException(
@@ -579,22 +579,22 @@ async def update_commande_status(
                     detail="Code de livraison invalide ou manquant"
                 )
             await redis_client.delete(_attempts_key)  # succès → reset
-        commande.livree_at = datetime.now(timezone.utc)
+        course.livree_at = datetime.now(timezone.utc)
         livreur.nombre_courses_completees += 1
-        livreur.total_gains += commande.montant_livreur  # gains totaux (cash + plateforme) — statistique
+        livreur.total_gains += course.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
-        if commande.mode_paiement == ModePaiement.MOBILE_MONEY:
+        if course.mode_paiement == ModePaiement.MOBILE_MONEY:
             # La plateforme a encaissé le client → crédite les Gains (retirables) du livreur.
             solde_avant = livreur.solde_disponible
-            livreur.solde_disponible = soldes.gains_crediter(solde_avant, commande.montant_livreur)
+            livreur.solde_disponible = soldes.gains_crediter(solde_avant, course.montant_livreur)
             txn = WalletTransaction(
                 livreur_id=livreur.id,
                 type="credit",
-                montant=commande.montant_livreur,
+                montant=course.montant_livreur,
                 solde_avant=solde_avant,
                 solde_apres=livreur.solde_disponible,
-                description=f"Course #{commande.numero_commande} (Mobile Money)",
-                commande_id=commande.id,
+                description=f"Course #{course.numero_course} (Mobile Money)",
+                course_id=course.id,
                 statut="complete",
             )
             db.add(txn)
@@ -604,9 +604,9 @@ async def update_commande_status(
         
         # Vérifier s'il reste d'autres courses actives
         other_active_query = select(func.count()).where(
-            Commande.livreur_id == livreur.id,
-            Commande.id != commande.id,
-            Commande.status.in_([CommandeStatus.ACCEPTEE, CommandeStatus.EN_RECUPERATION, CommandeStatus.EN_LIVRAISON])
+            Course.livreur_id == livreur.id,
+            Course.id != course.id,
+            Course.status.in_([CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON])
         )
         other_result = await db.execute(other_active_query)
         other_count = other_result.scalar() or 0
@@ -616,11 +616,11 @@ async def update_commande_status(
             # is_disponible reste inchangé : le livreur décide lui-même de se remettre en ligne
     
     await db.commit()
-    await db.refresh(commande)
+    await db.refresh(course)
     
     # Notifier le expediteur du changement de statut
     try:
-        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_query = select(Expediteur).where(Expediteur.id == course.expediteur_id)
         expediteur_result = await db.execute(expediteur_query)
         expediteur_notif = expediteur_result.scalar_one_or_none()
         if expediteur_notif:
@@ -629,30 +629,30 @@ async def update_commande_status(
                 await notification_service.notifier_changement_status(
                     device_token=token,
                     status=nouveau_statut.value,
-                    numero_commande=commande.numero_commande,
+                    numero_course=course.numero_course,
                 )
     except Exception as e:
         logger.warning(f"Notification changement statut échouée: {e}")
     
-    return commande
+    return course
 
 
-@router.post("/{commande_id}/annuler", response_model=CommandeResponse)
-async def annuler_commande(
-    commande_id: str,
-    annulation: CommandeAnnulation,
+@router.post("/{course_id}/annuler", response_model=CourseResponse)
+async def annuler_course(
+    course_id: str,
+    annulation: CourseAnnulation,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Annuler une commande (expediteur propriétaire, livreur assigné, ou admin)"""
-    query = select(Commande).where(Commande.id == commande_id)
+    """Annuler une course (expediteur propriétaire, livreur assigné, ou admin)"""
+    query = select(Course).where(Course.id == course_id)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée"
+            detail="Course non trouvée"
         )
     
     # Vérifier les droits d'accès
@@ -663,38 +663,38 @@ async def annuler_commande(
         p_q = select(Expediteur).where(Expediteur.user_id == current_user.id)
         p_r = await db.execute(p_q)
         p = p_r.scalar_one_or_none()
-        is_expediteur_owner = p and commande.expediteur_id == p.id
+        is_expediteur_owner = p and course.expediteur_id == p.id
     elif current_user.role == UserRole.LIVREUR:
         l_q = select(Livreur).where(Livreur.user_id == current_user.id)
         l_r = await db.execute(l_q)
         l = l_r.scalar_one_or_none()
-        is_livreur_assigned = l and commande.livreur_id == l.id
+        is_livreur_assigned = l and course.livreur_id == l.id
 
     if not (is_admin or is_expediteur_owner or is_livreur_assigned):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Vous n'êtes pas autorisé à annuler cette commande"
+            detail="Vous n'êtes pas autorisé à annuler cette course"
         )
     
-    # Vérifier que la commande peut être annulée
-    non_annulable = [CommandeStatus.TERMINEE, CommandeStatus.ANNULEE]
-    if commande.status in non_annulable:
+    # Vérifier que la course peut être annulée
+    non_annulable = [CourseStatus.TERMINEE, CourseStatus.ANNULEE]
+    if course.status in non_annulable:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cette commande ne peut plus être annulée"
+            detail="Cette course ne peut plus être annulée"
         )
     
     # Si un livreur était assigné, le libérer
-    if commande.livreur_id:
-        livreur_query = select(Livreur).where(Livreur.id == commande.livreur_id)
+    if course.livreur_id:
+        livreur_query = select(Livreur).where(Livreur.id == course.livreur_id)
         livreur_result = await db.execute(livreur_query)
         livreur = livreur_result.scalar_one_or_none()
         if livreur:
             # Vérifier s'il a d'autres courses actives
             other_active = select(func.count()).where(
-                Commande.livreur_id == livreur.id,
-                Commande.id != commande.id,
-                Commande.status.in_([CommandeStatus.ACCEPTEE, CommandeStatus.EN_RECUPERATION, CommandeStatus.EN_LIVRAISON])
+                Course.livreur_id == livreur.id,
+                Course.id != course.id,
+                Course.status.in_([CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON])
             )
             other_result = await db.execute(other_active)
             if (other_result.scalar() or 0) == 0:
@@ -702,42 +702,42 @@ async def annuler_commande(
                 livreur.is_disponible = True
     
     # Rembourser la commission réservée sur le Crédit de l'expéditeur (courses CASH).
-    if commande.mode_paiement == ModePaiement.CASH and commande.commission_plateforme:
+    if course.mode_paiement == ModePaiement.CASH and course.commission_plateforme:
         try:
             await credit_service.rembourser_commission(
-                db, commande.expediteur_id, commande.commission_plateforme,
-                commande_id=commande.id,
-                description=f"Remboursement course annulée #{commande.numero_commande}",
+                db, course.expediteur_id, course.commission_plateforme,
+                course_id=course.id,
+                description=f"Remboursement course annulée #{course.numero_course}",
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("Remboursement Crédit échoué (course %s): %s", commande.id, e)
+            logger.warning("Remboursement Crédit échoué (course %s): %s", course.id, e)
 
-    commande.status = CommandeStatus.ANNULEE
-    commande.annulee_at = datetime.now(timezone.utc)
-    commande.raison_annulation = annulation.raison
+    course.status = CourseStatus.ANNULEE
+    course.annulee_at = datetime.now(timezone.utc)
+    course.raison_annulation = annulation.raison
 
     await db.commit()
-    await db.refresh(commande)
+    await db.refresh(course)
     
     # Notifier le livreur (si assigné) et le expediteur de l'annulation
     try:
         raison = annulation.raison or ""
-        data = {"type": "commande_annulee", "numero_commande": commande.numero_commande, "raison": raison}
+        data = {"type": "course_annulee", "numero_course": course.numero_course, "raison": raison}
 
         # Notifier le livreur assigné
-        if commande.livreur_id:
-            livreur_q = select(Livreur).where(Livreur.id == commande.livreur_id)
+        if course.livreur_id:
+            livreur_q = select(Livreur).where(Livreur.id == course.livreur_id)
             livreur_r = await db.execute(livreur_q)
             liv = livreur_r.scalar_one_or_none()
             if liv:
                 token = await _get_user_device_token(db, liv.user_id)
                 if token:
                     if is_expediteur_owner:
-                        msg_livreur = f"Le commerce a annulé la course #{commande.numero_commande}."
+                        msg_livreur = f"Le commerce a annulé la course #{course.numero_course}."
                     elif is_admin:
-                        msg_livreur = f"La course #{commande.numero_commande} a été annulée par l'admin."
+                        msg_livreur = f"La course #{course.numero_course} a été annulée par l'admin."
                     else:
-                        msg_livreur = f"Course #{commande.numero_commande} annulée."
+                        msg_livreur = f"Course #{course.numero_course} annulée."
                     if raison:
                         msg_livreur += f" Motif : {raison}"
                     await notification_service.envoyer_notification_push(
@@ -745,18 +745,18 @@ async def annuler_commande(
                     )
 
         # Notifier le expediteur
-        expediteur_q = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+        expediteur_q = select(Expediteur).where(Expediteur.id == course.expediteur_id)
         expediteur_r = await db.execute(expediteur_q)
         expediteur_notif = expediteur_r.scalar_one_or_none()
         if expediteur_notif:
             token = await _get_user_device_token(db, expediteur_notif.user_id)
             if token:
                 if is_livreur_assigned:
-                    msg_expediteur = f"Le livreur a annulé la course #{commande.numero_commande}."
+                    msg_expediteur = f"Le livreur a annulé la course #{course.numero_course}."
                 elif is_admin:
-                    msg_expediteur = f"La course #{commande.numero_commande} a été annulée par l'admin."
+                    msg_expediteur = f"La course #{course.numero_course} a été annulée par l'admin."
                 else:
-                    msg_expediteur = f"Course #{commande.numero_commande} annulée."
+                    msg_expediteur = f"Course #{course.numero_course} annulée."
                 if raison:
                     msg_expediteur += f" Motif : {raison}"
                 await notification_service.envoyer_notification_push(
@@ -765,38 +765,38 @@ async def annuler_commande(
     except Exception as e:
         logger.warning(f"Notification annulation échouée: {e}")
     
-    return commande
+    return course
 
 
-@router.post("/{commande_id}/evaluer", response_model=CommandeResponse)
+@router.post("/{course_id}/evaluer", response_model=CourseResponse)
 async def evaluer_livreur(
-    commande_id: str,
-    evaluation: CommandeEvaluation,
+    course_id: str,
+    evaluation: CourseEvaluation,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):
     """Évaluer le livreur après livraison (expediteur)"""
-    query = select(Commande).where(
-        Commande.id == commande_id,
-        Commande.expediteur_id == expediteur.id,
-        Commande.status == CommandeStatus.TERMINEE
+    query = select(Course).where(
+        Course.id == course_id,
+        Course.expediteur_id == expediteur.id,
+        Course.status == CourseStatus.TERMINEE
     )
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée ou non terminée"
+            detail="Course non trouvée ou non terminée"
         )
     
     # Enregistrer l'évaluation
-    commande.note_livreur = evaluation.note_livreur
-    commande.commentaire_livreur = evaluation.commentaire_livreur
+    course.note_livreur = evaluation.note_livreur
+    course.commentaire_livreur = evaluation.commentaire_livreur
     
     # Mettre à jour la note du livreur
-    if commande.livreur_id:
-        livreur_query = select(Livreur).where(Livreur.id == commande.livreur_id)
+    if course.livreur_id:
+        livreur_query = select(Livreur).where(Livreur.id == course.livreur_id)
         livreur_result = await db.execute(livreur_query)
         livreur = livreur_result.scalar_one_or_none()
         
@@ -806,29 +806,29 @@ async def evaluer_livreur(
             livreur.note_moyenne = (total_notes + evaluation.note_livreur) / livreur.nombre_evaluations
     
     await db.commit()
-    await db.refresh(commande)
+    await db.refresh(course)
     
-    return commande
+    return course
 
 
-@router.post("/{commande_id}/confirmer-paiement", response_model=CommandeResponse)
+@router.post("/{course_id}/confirmer-paiement", response_model=CourseResponse)
 async def confirmer_paiement(
-    commande_id: str,
+    course_id: str,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
-    """Confirmer le paiement d'une commande (livreur assigné uniquement)"""
-    query = select(Commande).where(Commande.id == commande_id)
+    """Confirmer le paiement d'une course (livreur assigné uniquement)"""
+    query = select(Course).where(Course.id == course_id)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée"
+            detail="Course non trouvée"
         )
     
-    if commande.livreur_id != livreur.id:
+    if course.livreur_id != livreur.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Seul le livreur assigné peut confirmer le paiement"
@@ -836,40 +836,40 @@ async def confirmer_paiement(
 
     # Le Mobile Money est confirmé automatiquement par le webhook GeniusPay :
     # cet endpoint ne sert qu'à la confirmation manuelle du CASH.
-    if commande.mode_paiement == ModePaiement.MOBILE_MONEY:
+    if course.mode_paiement == ModePaiement.MOBILE_MONEY:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le paiement Mobile Money est confirmé automatiquement."
         )
 
-    if commande.paiement_confirme == "oui":
+    if course.paiement_confirme == "oui":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le paiement a déjà été confirmé"
         )
     
-    commande.paiement_confirme = "oui"
+    course.paiement_confirme = "oui"
     await db.commit()
-    await db.refresh(commande)
+    await db.refresh(course)
     
-    return commande
+    return course
 
 
-@router.get("/{commande_id}", response_model=CommandeWithDetails)
-async def get_commande_details(
-    commande_id: str,
+@router.get("/{course_id}", response_model=CourseWithDetails)
+async def get_course_details(
+    course_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir les détails d'une commande (expediteur propriétaire, livreur assigné, ou admin)"""
-    query = select(Commande).where(Commande.id == commande_id)
+    """Obtenir les détails d'une course (expediteur propriétaire, livreur assigné, ou admin)"""
+    query = select(Course).where(Course.id == course_id)
     result = await db.execute(query)
-    commande = result.scalar_one_or_none()
+    course = result.scalar_one_or_none()
     
-    if not commande:
+    if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commande non trouvée"
+            detail="Course non trouvée"
         )
     
     # Vérifier les droits d'accès
@@ -880,25 +880,25 @@ async def get_commande_details(
         p_q = select(Expediteur).where(Expediteur.user_id == current_user.id)
         p_r = await db.execute(p_q)
         p = p_r.scalar_one_or_none()
-        is_expediteur_owner = p and commande.expediteur_id == p.id
+        is_expediteur_owner = p and course.expediteur_id == p.id
     elif current_user.role == UserRole.LIVREUR:
         l_q = select(Livreur).where(Livreur.user_id == current_user.id)
         l_r = await db.execute(l_q)
         l = l_r.scalar_one_or_none()
-        is_livreur_assigned = l and commande.livreur_id == l.id
+        is_livreur_assigned = l and course.livreur_id == l.id
 
     if not (is_admin or is_expediteur_owner or is_livreur_assigned):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Vous n'êtes pas autorisé à consulter cette commande"
+            detail="Vous n'êtes pas autorisé à consulter cette course"
         )
     
     # Récupérer les détails expediteur et livreur
-    response_dict = CommandeResponse.model_validate(commande).model_dump()
+    response_dict = CourseResponse.model_validate(course).model_dump()
     
     # Ajouter le expediteur
-    if commande.expediteur_id:
-        expediteur_query = select(Expediteur).where(Expediteur.id == commande.expediteur_id)
+    if course.expediteur_id:
+        expediteur_query = select(Expediteur).where(Expediteur.id == course.expediteur_id)
         expediteur_result = await db.execute(expediteur_query)
         expediteur = expediteur_result.scalar_one_or_none()
         if expediteur:
@@ -908,8 +908,8 @@ async def get_commande_details(
             }
     
     # Ajouter le livreur
-    if commande.livreur_id:
-        livreur_query = select(Livreur).where(Livreur.id == commande.livreur_id)
+    if course.livreur_id:
+        livreur_query = select(Livreur).where(Livreur.id == course.livreur_id)
         livreur_result = await db.execute(livreur_query)
         livreur = livreur_result.scalar_one_or_none()
         if livreur:

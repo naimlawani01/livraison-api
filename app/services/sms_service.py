@@ -81,12 +81,12 @@ class SMSService:
         )
         return await self._send(telephone, message)
 
-    async def envoyer_sms_commande(
+    async def envoyer_sms_course(
         self,
         *,
         telephone: str,
         nom_client: str,
-        numero_commande: str,
+        numero_course: str,
         expediteur_nom: str,
         montant: float,
         tracking_url: str,
@@ -94,7 +94,7 @@ class SMSService:
         position_required: bool = False,
     ) -> bool:
         """
-        SMS unifié envoyé au client à la création de la commande.
+        SMS unifié envoyé au client à la création de la course.
 
         3 variantes selon l'état :
         - position_required=True : on a besoin que le client partage sa
