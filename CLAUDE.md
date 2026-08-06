@@ -22,14 +22,16 @@ This directory contains the main API for the Sonaiyaa project.
 - **Run tests**: `pip install -r requirements-dev.txt` then `python -m pytest`. Les tests d'intégration DB tournent sur SQLite par défaut (aucun setup) ; définir `DATABASE_TEST_URL` vers un Postgres de test pour valider les verrous `FOR UPDATE` réels.
 
 ## ⚠️ Migration en cours — Modèle Crédit / Gains (nouveau modèle économique)
-> **Renommage `partenaire → expediteur` FAIT (2026-08-05)** dans tout le code + l'API + la DB : modèle `Expediteur`, endpoints `/expediteurs`, enum `TypeExpediteur`, colonnes `expediteur_id` / `type_expediteur`, table `expediteurs` (migration `019`, défensive vis-à-vis du `create_all` de démarrage). Contrat API cassant → apps mobiles mises à jour et à republier. **Exceptions conservées** (identités de déploiement, immuables) : bundle ids `com.livraison.partenaire` / `com.livraison.livreur`, noms de dossiers `mobile-partenaire/` `mobile-livreur/`. Reste du glossaire produit : `commande` = **Course** · `wallet`/`solde_disponible` (livreur) = **Gains** · `credit_solde` (expediteur) = **Crédit**. Dans le code on écrit `expediteur` (sans accent) ; dans les textes affichés « Expéditeur » (avec accent).
+> **Renommage `partenaire → expediteur` FAIT (2026-08-05)** dans tout le code + l'API + la DB : modèle `Expediteur`, endpoints `/expediteurs`, enum `TypeExpediteur`, colonnes `expediteur_id` / `type_expediteur`, table `expediteurs` (migration `019`, défensive vis-à-vis du `create_all` de démarrage). Contrat API cassant → apps mobiles mises à jour et à republier. **Exceptions conservées** (identités de déploiement, immuables) : bundle ids `com.livraison.partenaire` / `com.livraison.livreur`, noms de dossiers `mobile-partenaire/` `mobile-livreur/`. 
+> **Renommage `commande → course` FAIT (2026-08-06)** : modèle `Course` (`app/models/course.py`), endpoints `/courses`, enum `CourseStatus` (le TYPE enum Postgres reste `commandestatus`, figé via `name=`), colonnes `course_id`, table `courses` (migration `020`, même schéma défensif que 019), event WS `nouvelle_course`. Contrat API cassant → apps à republier. Collision gérée : `api_service.cancelCommande` + `cancelCourse` (2 méthodes homonymes après rename) → dédupliquées en une seule `cancelCourse` retournant `Course`.
+> Reste du glossaire produit : `wallet`/`solde_disponible` (livreur) = **Gains** · `credit_solde` (expediteur) = **Crédit**. Dans le code on écrit `expediteur`/`course` (sans accent) ; textes affichés « Expéditeur » (accentué), « course » (mot FR normal).
 
 Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Gains livreur**. État actuel :
 - **Commission = 12 %** (était 15 %). Source de vérité unique : `app/services/pricing.py` (`calculer_tarif` : plancher 10 000 + 1 500/km, colis simplifié standard/fragile/volumineux, **sans surge horaire**).
 - **Crédit (expéditeur)** : solde prépayé `expediteurs.credit_solde` + journal `credit_transactions` (migration `018`). Se recharge via PSP (`POST /expediteurs/me/credit/recharge` → webhook `payment.success` type `credit_recharge`). La **commission d'une course cash est débitée du Crédit à la création** (garde-fou : Crédit insuffisant → 400, rien créé), remboursée à l'annulation, ajustée au partage GPS.
 - **Gains (livreur)** : `livreur.solde_disponible` devient **positif uniquement** (courses Mobile Money + indemnités), retiré via `POST /livreurs/me/wallet/retrait`. **Plus de recharge ni de dette** côté livreur (course cash = payé cash par l'expéditeur, aucune écriture livreur).
 - Règles d'argent pures et testées dans `app/services/soldes.py` (le Crédit ne passe jamais sous zéro, les Gains restent positifs) ; service transactionnel `app/services/credit_service.py` (verrou `with_for_update`).
-- **Restant** : renommage `commande→course` (cosmétique, optionnel). ~~renommage partenaire→expediteur~~ ✅ fait (code+API+DB, migration 019) · ~~fix payload GNF~~ ✅ fait · ~~endpoints admin Crédit~~ ✅ fait · ~~apps mobiles~~ ✅ fait (design premium + Crédit/Gains).
+- **Restant** : (plus de renommage en attente). ~~renommage partenaire→expediteur~~ ✅ fait (migration 019) · ~~renommage commande→course~~ ✅ fait (migration 020) · ~~fix payload GNF~~ ✅ fait · ~~endpoints admin Crédit~~ ✅ fait · ~~apps mobiles~~ ✅ fait.
 
 ## Key Environment Variables
 - `SECRET_KEY` — JWT signing secret
@@ -72,45 +74,45 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
   | `/auth/verify-otp` | 20/hour | + custom OTP rate limit |
   | `/loc/{token}/submit` | 20/min | public endpoint, anti flood |
   | (everything else) | 120/min default | global guardrail |
-- **DB composite indexes**: hot query paths have composite indexes (see `app/models/commande.py:__table_args__` and `wallet_transaction.py`). Migration `017_add_composite_indexes.py` applies them in prod. When adding a query that filters on multiple columns at once, check if an index covers it — otherwise add one (in the model + a migration).
+- **DB composite indexes**: hot query paths have composite indexes (see `app/models/course.py:__table_args__` and `wallet_transaction.py`). Migration `017_add_composite_indexes.py` applies them in prod. When adding a query that filters on multiple columns at once, check if an index covers it — otherwise add one (in the model + a migration).
 - **Health checks**: two endpoints — `GET /health` (liveness, ~ms, used by Railway/LB, always 200 when process responds) and `GET /health/deep` (readiness, ~50-200ms, used by external monitoring like UptimeRobot/BetterStack, returns 503 if any of DB/Redis/R2 is down). GeniusPay is intentionally NOT checked in deep health — its transient outages shouldn't flag Sönaiyaa as degraded.
 - **Redis cache patterns**:
   - `admin/stats` endpoint caches its result 60s in Redis (key `admin:stats:v1`). Avoids 11 aggregation queries per dashboard refresh. Graceful degradation if Redis is down (calculates fresh).
   - `storage_service.presigned_url_cached(key, expires_in)` — async wrapper around `presigned_url()` with Redis cache (90% of TTL). Use it in admin endpoints that serve doc URLs to avoid re-signing on every read. Currently the codebase exposes R2 documents via direct public URLs (`r.piece_identite_url`, `r.devanture_url`), but when migrating to private buckets + presigned URLs, switch admin endpoints to `await storage_service.presigned_url_cached(key)`.
-- **Pagination admin**: `GET /admin/livreurs/tous`, `/admin/partenaires/tous`, and `/admin/users` all support `?limit=` (cap 200 default, max 500) and `?offset=`. The admin-web UI ignores these by default but should start passing them once the lists grow beyond a few hundred rows.
-- **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_partenaire` dependencies (from `app/utils/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS. `POST /auth/login` (phone + password) **requires a non-empty password** — never make it optional (an absent password must return 401, otherwise anyone knowing a verified phone gets tokens).
+- **Pagination admin**: `GET /admin/livreurs/tous`, `/admin/expediteurs/tous`, and `/admin/users` all support `?limit=` (cap 200 default, max 500) and `?offset=`. The admin-web UI ignores these by default but should start passing them once the lists grow beyond a few hundred rows.
+- **Authentication**: Secure endpoints using the `get_current_user`, `get_current_livreur` or `get_current_expediteur` dependencies (from `app/utils/dependencies.py`). JWT tokens expire after 8h (refresh: 30 days). Login is phone + OTP via PasseInfo SMS. `POST /auth/login` (phone + password) **requires a non-empty password** — never make it optional (an absent password must return 401, otherwise anyone knowing a verified phone gets tokens).
 - **Sécurité — durcissements en place** (audit + correctifs) :
   - **Type de token enforced** : `get_current_user` refuse tout token dont `type != "access"` (un refresh token de 30 j ne peut PAS authentifier une requête API) ; `/auth/refresh` exige `type == "refresh"`.
   - **Uploads** : plafond `settings.MAX_UPLOAD_BYTES` (8 Mo, rejet 413 avant lecture en RAM) **+ validation des magic bytes** (`filetype`, on utilise le MIME réel, pas celui déclaré). Clé R2 = `{folder}/{uuid}.{ext}` avec ext sanitisée.
-  - **Documents sensibles servis en URL présignée** : les endpoints admin (`livreurs/en-attente`, `livreurs/{id}`, `partenaires/…`) ne renvoient plus l'URL publique permanente des pièces d'identité / docs véhicule / devantures, mais une **URL présignée temporaire** via `storage_service.signed_view_url(stored_url)` (dérive la clé, signe 1 h, cache-friendly). Le bucket R2 peut donc être privé ; fallback gracieux sur l'URL d'origine si la clé n'est pas dérivable.
-  - **Code de livraison anti brute-force** : le PIN à 4 chiffres est limité à **5 tentatives / 15 min / commande** via un compteur Redis (`code_attempts:{id}`) dans `PATCH /commandes/{id}/statut` → TERMINEE (429 au blocage, reset au succès).
+  - **Documents sensibles servis en URL présignée** : les endpoints admin (`livreurs/en-attente`, `livreurs/{id}`, `expediteurs/…`) ne renvoient plus l'URL publique permanente des pièces d'identité / docs véhicule / devantures, mais une **URL présignée temporaire** via `storage_service.signed_view_url(stored_url)` (dérive la clé, signe 1 h, cache-friendly). Le bucket R2 peut donc être privé ; fallback gracieux sur l'URL d'origine si la clé n'est pas dérivable.
+  - **Code de livraison anti brute-force** : le PIN à 4 chiffres est limité à **5 tentatives / 15 min / course** via un compteur Redis (`code_attempts:{id}`) dans `PATCH /courses/{id}/statut` → TERMINEE (429 au blocage, reset au succès).
   - **En-têtes de sécurité** : middleware dans `main.py` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, **HSTS en prod** seulement).
   - **Rate-limit derrière proxy** : `start.sh` lance uvicorn avec `--proxy-headers --forwarded-allow-ips="*"` → slowapi compte par **vraie IP client** (sinon, derrière Railway, `get_remote_address` renvoie l'IP du proxy et le rate-limit devient global).
   - **`confirmer-paiement`** : restreint au **cash** (le Mobile Money est confirmé par le webhook).
   - **JWT & crypto** : bcrypt, `jwt.decode(..., algorithms=[HS256])` explicite (pas de confusion d'algo), `jti` + blacklist Redis (révocation au logout), OTP & code de livraison via `secrets` (crypto-safe).
   - ⚠️ **À vérifier côté déploiement (Railway)** : `CORS_ORIGINS` = uniquement les domaines prod (pas de localhost), `CORS_ALLOW_ALL_ORIGINS=False`, `SECRET_KEY` long/aléatoire (pas la valeur d'`.env.example`).
   - **WebSocket auth** : le token passe par le **sous-protocole WS** (le client offre `["bearer", "<jwt>"]`, cf. `websocket_service.dart`) → hors de l'URL, donc hors des logs. Le **query param `?token=` reste accepté en repli legacy** pour les apps déjà déployées ; à retirer une fois toutes les versions migrées. Le WS vérifie aussi `type == "access"`.
-- **State Machine**: Order statuses must strictly follow the flow defined in the `TRANSITIONS_VALIDES` dictionary (in `app/api/v1/endpoints/commandes.py`). No wild/unauthorized transitions.
+- **State Machine**: Order statuses must strictly follow the flow defined in the `TRANSITIONS_VALIDES` dictionary (in `app/api/v1/endpoints/courses.py`). No wild/unauthorized transitions.
 - **WebSockets**: The WS connection requires the JWT token as a query parameter `?token=xxx`. The `ConnectionManager` uses Redis Pub/Sub for broadcasting across multiple workers.
-- **Pagination**: Queries listing orders use pagination returning a dictionary: `{ "total": N, "page": P, "pages": X, "commandes": [...] }`.
+- **Pagination**: Queries listing orders use pagination returning a dictionary: `{ "total": N, "page": P, "pages": X, "courses": [...] }`.
 
 ## Services Layer (`app/services/`)
-- **`storage_service.py`**: Cloudflare R2 uploads. Driver docs go to `livreurs/{uuid}.{ext}`, merchant photos to `partenaires/{uuid}.{ext}`. Generates presigned URLs for admin review.
+- **`storage_service.py`**: Cloudflare R2 uploads. Driver docs go to `livreurs/{uuid}.{ext}`, merchant photos to `expediteurs/{uuid}.{ext}`. Generates presigned URLs for admin review.
 - **`genius_pay_service.py`**: GeniusPay integration. `initier_paiement()` creates a checkout URL; `initier_payout()` sends driver withdrawals. **Devise = GNF** (`settings.GENIUSPAY_CURRENCY`, défaut `"GNF"`) envoyée explicitement sur checkout ET payout — sans ça GeniusPay applique XOF par défaut et surfacture ~15× (les montants produit sont en GNF). Le payout **normalise le provider** vers les valeurs canoniques GeniusPay (`_PROVIDER_ALIASES` : `mtn_money→mtn_momo`, etc.). Régression : `tests/test_geniuspay_payload.py`. Webhook verification uses HMAC-SHA256 (`timestamp.payload`) with 15-minute replay protection.
 - **`sms_service.py`**: PasseInfo SMS — OTP dispatch. Endpoint `POST /v1/message/single_message`, auth via headers `api_key` + `client_id`. Numéros au format `6XXXXXXXX` (sans indicatif).
 - **`notification_service.py`**: Firebase FCM — push notifications to mobile apps.
 
 ## Key API Endpoints
 - `POST /api/v1/livreurs/upload-document` — Upload driver documents (piece_identite, vehicule_doc, photo_profil) to R2
-- `POST /api/v1/partenaires/me/upload-document` — Upload merchant storefront photo to R2
+- `POST /api/v1/expediteurs/me/upload-document` — Upload merchant storefront photo to R2
 - `GET /api/v1/livreurs/me/wallet` — Driver wallet summary (balance, gains, completed deliveries)
 - `GET /api/v1/livreurs/me/wallet/transactions` — Paginated transaction history
 - `POST /api/v1/livreurs/me/retrait` — Request withdrawal to Mobile Money (montant, methode, numero_telephone)
-- `POST /api/v1/payments/commandes/{id}/relancer` — Regenerate expired payment link
+- `POST /api/v1/payments/courses/{id}/relancer` — Regenerate expired payment link
 - `POST /api/v1/payments/webhooks/geniuspay` — GeniusPay webhook receiver
 - `GET /api/v1/admin/stats` — Platform stats (users, drivers, orders, revenue, completion rate)
 - `GET /api/v1/admin/livreurs/en-attente` — Drivers pending verification
-- `POST /api/v1/admin/test-accounts` — Create pre-verified Partenaire/Livreur test accounts (used for Apple/Play store reviewers and internal QA). Phones must start with `+224600` (unallocated GN prefix). Auto-marks the user/profile as `is_verified=true` so the reviewer can sign in immediately.
+- `POST /api/v1/admin/test-accounts` — Create pre-verified Expediteur/Livreur test accounts (used for Apple/Play store reviewers and internal QA). Phones must start with `+224600` (unallocated GN prefix). Auto-marks the user/profile as `is_verified=true` so the reviewer can sign in immediately.
 - `GET /api/v1/admin/test-accounts` — List all test accounts (filtered by `+224600` prefix)
 - `DELETE /api/v1/admin/test-accounts/{user_id}` — Remove a test account (refuses non-test phones for safety)
 - `GET /health` — Health check endpoint (used by Docker & Railway)
