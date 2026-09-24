@@ -1,14 +1,18 @@
 """Tarification des courses Sönaiyaa — source de vérité du modèle de prix.
 
 Le prix d'une course est fonction de la distance (point de retrait de
-l'expéditeur → quartier de destination). La plateforme prélève une commission ;
-le reste revient au livreur.
+l'expéditeur → quartier de destination).
+
+Modèle « l'expéditeur cherche un livreur » : l'expéditeur règle le livreur (lui-même
+ou via son client, en cash ou Mobile Money) et paie à Sönaiyaa une commission de
+mise en relation **en plus**, débitée de son Crédit — identique quel que soit le
+mode de paiement.
 
     prix         = arrondi(PRIX_BASE + PRIX_KM × distance_km) × mult_colis
-    commission   = prix × TAUX_COMMISSION      (débitée du Crédit de l'expéditeur)
-    gain_livreur = prix − commission           (réglé au livreur)
+    gain_livreur = prix                        (100 % au livreur)
+    commission   = prix × TAUX_COMMISSION      (en sus, débitée du Crédit de l'expéditeur)
 
-Invariant garanti : ``commission + gain_livreur == prix``.
+Invariant garanti : ``gain_livreur == prix``.
 
 Ce module est volontairement **pur** (aucune dépendance DB ni settings) afin de
 rester déterministe et testable sans environnement. Il remplace l'ancienne
@@ -40,11 +44,11 @@ MULT_COLIS_DEFAUT: float = 1.0
 class Tarif:
     """Décomposition financière d'une course.
 
-    Invariant : ``commission + gain_livreur == prix``.
+    Invariant : ``gain_livreur == prix`` (la commission est payée en sus).
     """
-    prix: int             # ce que paie l'expéditeur (total, ferme)
-    commission: int       # part plateforme, débitée du Crédit de l'expéditeur
-    gain_livreur: int     # part livreur (réglée en cash ou via la plateforme)
+    prix: int             # prix de la livraison, payé au livreur (par l'expéditeur ou son client)
+    commission: int       # commission Sönaiyaa, en sus, débitée du Crédit de l'expéditeur
+    gain_livreur: int     # part livreur = prix (cash ou crédité sur ses Gains)
     distance_km: float
     type_colis: str
     mult_colis: float
@@ -75,7 +79,7 @@ def calculer_tarif(distance_km: float, type_colis: str = "standard") -> Tarif:
     prix = max(PRIX_BASE, _arrondir(brut))
 
     commission = int(round(prix * TAUX_COMMISSION))
-    gain_livreur = prix - commission
+    gain_livreur = prix
 
     return Tarif(
         prix=prix,

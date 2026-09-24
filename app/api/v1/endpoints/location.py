@@ -169,9 +169,9 @@ async def submit_location(
         course.montant_livreur = tarif.gain_livreur
         await db.flush()
 
-        # Ajuster le Crédit de l'expéditeur du delta de commission (courses CASH,
-        # dont la commission a été réservée au plancher à la création).
-        if course.mode_paiement == ModePaiement.CASH:
+        # Ajuster le Crédit de l'expéditeur du delta de commission (réservée au
+        # plancher à la création).
+        if await credit_service.commission_reservee(db, course.id):
             await credit_service.ajuster_commission(
                 db, course.expediteur_id, ancienne_commission, tarif.commission,
                 course_id=course.id,

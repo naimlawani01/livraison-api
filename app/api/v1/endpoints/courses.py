@@ -172,24 +172,21 @@ async def create_course(
     db.add(course)
     await db.flush()  # obtient course.id sans committer (FK du débit Crédit)
 
-    # Réserver la commission sur le Crédit de l'expéditeur — courses CASH uniquement.
-    # (Le MoBILE MONEY est encaissé auprès du client, le Crédit n'est pas concerné.)
+    # Réserver la commission sur le Crédit de l'expéditeur — cash ET Mobile Money
+    # (commission de mise en relation payée en sus par l'expéditeur, cf. pricing.py).
     # Le débit atomique EST le garde-fou : Crédit insuffisant → rien n'est créé.
-    if course.mode_paiement == ModePaiement.CASH:
-        try:
-            await credit_service.debiter_commission(
-                db, expediteur.id, commission,
-                course_id=course.id,
-                description=f"Commission course #{course.numero_course}",
-            )
-        except soldes.SoldeInsuffisant:
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Crédit insuffisant pour créer cette course. Rechargez votre Crédit.",
-            )
-    else:
-        await db.commit()
+    try:
+        await credit_service.debiter_commission(
+            db, expediteur.id, commission,
+            course_id=course.id,
+            description=f"Commission course #{course.numero_course}",
+        )
+    except soldes.SoldeInsuffisant:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Crédit insuffisant pour créer cette course. Rechargez votre Crédit.",
+        )
     await db.refresh(course)
 
     checkout_url: Optional[str] = None
@@ -682,8 +679,8 @@ async def annuler_course(
                 livreur.is_en_course = False
                 livreur.is_disponible = True
     
-    # Rembourser la commission réservée sur le Crédit de l'expéditeur (courses CASH).
-    if course.mode_paiement == ModePaiement.CASH and course.commission_plateforme:
+    # Rembourser la commission réservée sur le Crédit de l'expéditeur.
+    if course.commission_plateforme and await credit_service.commission_reservee(db, course.id):
         try:
             await credit_service.rembourser_commission(
                 db, course.expediteur_id, course.commission_plateforme,

@@ -83,6 +83,19 @@ async def recharger(
     return txn
 
 
+async def commission_reservee(db: AsyncSession, course_id) -> bool:
+    """La commission de cette course a-t-elle été débitée du Crédit ?
+
+    Faux pour les courses Mobile Money antérieures au débit systématique : il ne
+    faut alors ni les rembourser ni les ajuster.
+    """
+    q = select(CreditTransaction.id).where(
+        CreditTransaction.course_id == course_id,
+        CreditTransaction.type == "commission",
+    ).limit(1)
+    return (await db.execute(q)).first() is not None
+
+
 async def debiter_commission(
     db: AsyncSession,
     expediteur_id,

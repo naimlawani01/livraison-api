@@ -18,7 +18,7 @@ class TestPlancher:
         t = calculer_tarif(0)
         assert t.prix == 10_000
         assert t.commission == 1_200      # 12 %
-        assert t.gain_livreur == 8_800
+        assert t.gain_livreur == 10_000   # 100 % au livreur, commission en sus
 
     def test_course_tres_courte_ne_descend_pas_sous_le_plancher(self):
         assert calculer_tarif(0.1).prix == PRIX_BASE
@@ -26,9 +26,9 @@ class TestPlancher:
 
 class TestGrilleDistance:
     @pytest.mark.parametrize("km, prix, commission, gain", [
-        (2, 13_000, 1_560, 11_440),
-        (5, 17_500, 2_100, 15_400),
-        (15, 32_500, 3_900, 28_600),
+        (2, 13_000, 1_560, 13_000),
+        (5, 17_500, 2_100, 17_500),
+        (15, 32_500, 3_900, 32_500),
     ])
     def test_grille_de_reference(self, km, prix, commission, gain):
         t = calculer_tarif(km)
@@ -39,9 +39,9 @@ class TestGrilleDistance:
 
 class TestInvariants:
     @pytest.mark.parametrize("km", [0, 1, 2.4, 5, 7.7, 15, 30])
-    def test_commission_plus_gain_egale_prix(self, km):
+    def test_livreur_recoit_tout_le_prix(self, km):
         t = calculer_tarif(km)
-        assert t.commission + t.gain_livreur == t.prix
+        assert t.gain_livreur == t.prix   # la commission est payée en sus par l'expéditeur
 
     @pytest.mark.parametrize("km", [0, 1, 3.3, 8, 12.5])
     def test_prix_toujours_multiple_de_500(self, km):
