@@ -579,9 +579,9 @@ let livreurDisplayPos = null;  // position interpolée affichée
 let animationFrameId = null;
 
 const STATUS_CONFIG = {{
-  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Course reçue',           desc: 'Le expediteur prépare votre course' }},
+  CREEE:           {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'Course reçue',           desc: 'L’expéditeur prépare votre course' }},
   DIFFUSEE:        {{ pip: 0, icon: '📋', label: 'Préparation',     title: 'À la recherche d\\'un livreur', desc: 'Nous cherchons le livreur le plus proche' }},
-  ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers le expediteur' }},
+  ACCEPTEE:        {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur assigné',          desc: 'Se dirige vers l’expéditeur' }},
   EN_RECUPERATION: {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur sur place',        desc: 'Récupération en cours' }},
   EN_LIVRAISON:    {{ pip: 2, icon: '🚀', label: 'En chemin',        title: 'En route vers vous',       desc: 'Le livreur arrive !' }},
   TERMINEE:        {{ pip: 3, icon: '🎉', label: 'Livré',            title: 'Livraison terminée',       desc: '' }},
@@ -757,7 +757,7 @@ function updateEtaHero(data, vehiculeEmoji) {{
   if (data.status === 'EN_LIVRAISON' || data.status === 'ACCEPTEE' || data.status === 'EN_RECUPERATION') {{
     const e = computeEta(data);
     if (e) {{
-      const dest = (data.status === 'EN_LIVRAISON') ? 'chez vous' : 'chez le expediteur';
+      const dest = (data.status === 'EN_LIVRAISON') ? 'chez vous' : 'chez l’expéditeur';
       document.getElementById('etaValue').textContent = 'Arrivée dans ~' + e.eta;
       document.getElementById('etaSub').textContent = 'Le livreur est à ' + e.distance + ' — ' + dest;
       return;
@@ -816,7 +816,7 @@ function updateFinalBanner(data) {{
   const b = document.getElementById('finalBanner');
   if (data.status === 'ANNULEE') {{
     b.className = 'final-banner cancelled';
-    b.innerHTML = '<div class="big">❌</div><div class="label">Course annulée</div><div class="sub">Contactez le expediteur pour plus d\\'informations</div>';
+    b.innerHTML = '<div class="big">❌</div><div class="label">Course annulée</div><div class="sub">Contactez l’expéditeur pour plus d\\'informations</div>';
     document.getElementById('etaHero').style.display = 'none';
   }} else if (data.status === 'TERMINEE') {{
     b.className = 'final-banner delivered';
@@ -891,7 +891,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le expediteur.</p>
+  <p>Ce lien n'est plus valide. Contactez l’expéditeur.</p>
 </div>
 </body>
 </html>"""

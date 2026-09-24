@@ -143,12 +143,14 @@ class TestCreation:
 # ── Fin de course ────────────────────────────────────────────────────────────
 
 class TestCompletion:
-    async def _course_en_livraison(self, session, mode):
+    async def _course_en_livraison(self, session, mode, paye=True):
         from app.api.v1.endpoints.courses import create_course
-        from app.models.course import CourseStatus
+        from app.models.course import CourseStatus, ModePaiement
         _, p = await _creer_expediteur(session, credit=50_000)
         _, liv = await _creer_livreur(session)
         cmd = await create_course(_payload(mode), p, session)
+        if mode == ModePaiement.MOBILE_MONEY and paye:
+            cmd.paiement_confirme = "oui"  # confirmé par le webhook du PSP
         cmd.livreur_id = liv.id
         cmd.status = CourseStatus.EN_LIVRAISON
         await session.commit()
@@ -163,6 +165,14 @@ class TestCompletion:
         await session.refresh(liv)
         assert liv.solde_disponible == montant   # Gains crédités
         assert liv.total_gains == montant
+
+    async def test_momo_non_paye_ne_credite_pas_les_gains(self, session):
+        from app.api.v1.endpoints.courses import update_course_status
+        from app.models.course import ModePaiement, CourseStatus
+        cmd, liv = await self._course_en_livraison(session, ModePaiement.MOBILE_MONEY, paye=False)
+        await update_course_status(cmd.id, CourseStatus.TERMINEE, None, liv, session)
+        await session.refresh(liv)
+        assert liv.solde_disponible == 0   # argent jamais encaissé → rien à verser
 
     async def test_cash_ne_credite_pas_le_livreur(self, session):
         from app.api.v1.endpoints.courses import update_course_status
@@ -190,3 +200,30 @@ class TestAnnulation:
         await session.refresh(cmd)
         assert cmd.status == CourseStatus.ANNULEE
         assert await credit_service.credit_disponible(session, p.id) == 50_000  # remboursé
+
+
+# ── Garde-fous paiement Mobile Money ─────────────────────────────────────────
+
+class TestGardeFousMobileMoney:
+    async def test_livreur_ne_peut_pas_accepter_une_course_momo_non_payee(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import create_course, accepter_course
+        from app.models.course import ModePaiement
+        _, p = await _creer_expediteur(session, credit=0)
+        _, liv = await _creer_livreur(session)
+        cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        with pytest.raises(HTTPException) as exc:
+            await accepter_course(cmd.id, liv, session)
+        assert exc.value.status_code == 400
+
+    async def test_course_annulee_jamais_rediffusee(self, session):
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, CourseStatus
+        from app.services.matching_service import MatchingService
+        _, p = await _creer_expediteur(session, credit=0)
+        cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        cmd.status = CourseStatus.ANNULEE
+        await session.commit()
+        # ex. webhook payment.success reçu après l'annulation
+        assert await MatchingService.diffuser_course(session, cmd, 9.5, -13.7) == 0
+        assert cmd.status == CourseStatus.ANNULEE

@@ -45,38 +45,6 @@ async def _get_user_device_token(db: AsyncSession, user_id) -> Optional[str]:
 
 router = APIRouter()
 
-# ── Multiplicateurs nature du colis ───────────────────────────────────────────
-_MULT_COLIS: dict[str, float] = {
-    "standard":    1.0,
-    "alimentaire": 1.1,
-    "fragile":     1.3,
-    "documents":   0.9,
-    "volumineux":  1.5,
-}
-
-def _mult_heure(heure: int) -> float:
-    """M_heure : créneau normal=1.0, soirée=1.2, nuit=1.5"""
-    if 6 <= heure < 20:
-        return 1.0
-    elif 20 <= heure < 23:
-        return 1.2
-    return 1.5
-
-
-def calculer_prix(distance_km: float, nature_colis: str = "standard") -> float:
-    """Formule unifiée P = (P_base + d × T_km) × M_colis × M_heure.
-
-    Arrondi aux 500 GNF supérieurs, minimum P_base.
-    Utilisée à la création (si position connue) ET au partage GPS du client.
-    """
-    P_base = 10_000
-    T_km = 1_500
-    M_colis = _MULT_COLIS.get(str(nature_colis).lower(), 1.0)
-    M_heure = _mult_heure(datetime.now().hour)
-    prix_brut = (P_base + distance_km * T_km) * M_colis * M_heure
-    return max(P_base, round(prix_brut / 500) * 500)
-
-
 @router.post("/estimer-prix")
 async def estimer_prix(
     data: dict,
@@ -91,7 +59,7 @@ async def estimer_prix(
     if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des courses"
+            detail="Votre compte expéditeur doit être vérifié par un administrateur avant de pouvoir créer des courses"
         )
 
     lat = data.get("latitude_client")
@@ -143,7 +111,7 @@ async def create_course(
     if not expediteur.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre expediteur doit être vérifié par un administrateur avant de pouvoir créer des courses"
+            detail="Votre compte expéditeur doit être vérifié par un administrateur avant de pouvoir créer des courses"
         )
 
     has_position = (
@@ -247,12 +215,11 @@ async def create_course(
                 await db.commit()
                 # MM : on attend le webhook payment.success pour diffuser
             except Exception as e:  # noqa: BLE001
-                logger.error(f"GeniusPay initier_paiement échoué: {e} — diffusion directe en fallback")
-                await MatchingService.diffuser_course(
-                    db, course, expediteur.latitude, expediteur.longitude,
-                    expediteur_nom=expediteur.nom,
-                )
-        else:
+                # Pas de diffusion d'une course MM non payée : un livreur la livrerait
+                # et serait crédité d'un argent jamais encaissé. La course reste CREEE,
+                # l'expéditeur peut relancer le paiement (/payments/courses/{id}/relancer).
+                logger.error(f"GeniusPay initier_paiement échoué: {e} — course non diffusée")
+        elif course_data.mode_paiement == ModePaiement.CASH:
             # Cash → diffuser immédiatement
             await MatchingService.diffuser_course(
                 db, course, expediteur.latitude, expediteur.longitude,
@@ -465,6 +432,15 @@ async def accepter_course(
             detail="Cette course a déjà été prise par un autre livreur"
         )
     
+    if (
+        course.mode_paiement == ModePaiement.MOBILE_MONEY
+        and course.paiement_confirme != "oui"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cette course est en attente de paiement Mobile Money"
+        )
+
     if not livreur.is_disponible:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -583,7 +559,12 @@ async def update_course_status(
         livreur.nombre_courses_completees += 1
         livreur.total_gains += course.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
-        if course.mode_paiement == ModePaiement.MOBILE_MONEY:
+        if course.mode_paiement == ModePaiement.MOBILE_MONEY and course.paiement_confirme != "oui":
+            logger.error(
+                "Course MM terminée sans paiement confirmé — Gains non crédités",
+                extra={"course_id": str(course.id)},
+            )
+        elif course.mode_paiement == ModePaiement.MOBILE_MONEY:
             # La plateforme a encaissé le client → crédite les Gains (retirables) du livreur.
             solde_avant = livreur.solde_disponible
             livreur.solde_disponible = soldes.gains_crediter(solde_avant, course.montant_livreur)

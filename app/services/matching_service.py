@@ -40,6 +40,15 @@ class MatchingService:
         Returns:
             Nombre de livreurs notifiés
         """
+        # Ne jamais ressusciter une course acceptée, terminée ou annulée (ex. webhook
+        # de paiement reçu après annulation).
+        if course.status not in (CourseStatus.CREEE, CourseStatus.DIFFUSEE):
+            logger.warning(
+                "Diffusion ignorée : course non diffusable",
+                extra={"course_id": str(course.id), "status": str(course.status)},
+            )
+            return 0
+
         # Passer en DIFFUSEE immédiatement (visible pour tous les livreurs)
         course.status = CourseStatus.DIFFUSEE
         course.diffusee_at = datetime.now(timezone.utc)
@@ -134,19 +143,3 @@ class MatchingService:
         logger.info(f"Course {course.numero_course} acceptée par livreur {livreur.id}")
         
         return True
-    
-    @staticmethod
-    def calculer_commission(prix_propose: float) -> tuple[float, float]:
-        """
-        Calculer la commission et le montant pour le livreur
-        
-        Args:
-            prix_propose: Prix proposé pour la livraison
-            
-        Returns:
-            Tuple (commission_plateforme, montant_livreur)
-        """
-        commission = prix_propose * (settings.PLATFORM_COMMISSION_PERCENTAGE / 100)
-        montant_livreur = prix_propose - commission
-        
-        return round(commission, 2), round(montant_livreur, 2)
