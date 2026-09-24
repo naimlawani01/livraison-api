@@ -203,30 +203,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _check_production_config():
-    """Signale au démarrage une config de prod dangereuse (sans bloquer le boot,
-    pour ne jamais provoquer de panne sur une simple faiblesse de config)."""
-    if settings.ENVIRONMENT != "production":
-        return
-    problemes = []
-    if len(settings.SECRET_KEY) < 32 or settings.SECRET_KEY.startswith("change-this"):
-        problemes.append("SECRET_KEY trop courte ou valeur d'exemple")
-    if settings.DEBUG:
-        problemes.append("DEBUG=True (expose /docs)")
-    if settings.CORS_ALLOW_ALL_ORIGINS:
-        problemes.append("CORS_ALLOW_ALL_ORIGINS=True")
-    if any("localhost" in o or "127.0.0.1" in o for o in settings.CORS_ORIGINS):
-        problemes.append("CORS_ORIGINS contient localhost")
-    for p in problemes:
-        logger.error("Config prod non sécurisée", extra={"probleme": p})
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application"""
     # Startup
     logger.warning("Starting application...")
-    _check_production_config()
     await init_db()
     logger.warning("Database initialized")
 
