@@ -1,0 +1,51 @@
+# Environnement de dev local : API + PostgreSQL + Redis.
+# Usage : cp .env.example .env (renseigner SECRET_KEY, ADMIN_*), puis
+#   docker compose up --build
+# DATABASE_URL / REDIS_URL / DEBUG / ENVIRONMENT sont forcés ci-dessous pour
+# pointer vers les conteneurs locaux (ils écrasent les valeurs du .env).
+# La prod tourne sur Railway, pas avec ce fichier.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: livraison
+      POSTGRES_PASSWORD: livraison
+      POSTGRES_DB: livraison_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livraison -d livraison_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://livraison:livraison@db:5432/livraison_db
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "True"
+      ENVIRONMENT: local
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
