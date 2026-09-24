@@ -202,12 +202,8 @@ async def submit_location(
             await db.commit()
         except Exception as e:  # noqa: BLE001
             logger.error(f"GeniusPay initier_paiement échoué après partage: {e}")
-            # Fallback : on diffuse en Cash-style si le paiement plante
-            if course.status == CourseStatus.CREEE and expediteur:
-                await MatchingService.diffuser_course(
-                    db, course, expediteur.latitude, expediteur.longitude,
-                    expediteur_nom=expediteur.nom,
-                )
+            # Pas de diffusion d'une course MM non payée (cf. courses.create_course) :
+            # la course reste CREEE, l'expéditeur peut relancer le paiement.
 
     # ── 4. Diffuser la course si Cash et pas déjà diffusée ───────────
     if (
@@ -294,7 +290,7 @@ def _location_html(token: str) -> str:
   <div id="step-share">
     <div class="icon">📍</div>
     <h1>Partagez votre position</h1>
-    <p>Le expediteur a besoin de votre position pour calculer le prix et vous livrer. Appuyez sur le bouton ci-dessous.</p>
+    <p>L’expéditeur a besoin de votre position pour calculer le prix et vous livrer. Appuyez sur le bouton ci-dessous.</p>
     <button class="btn" id="shareBtn" onclick="shareLocation()">
       Partager ma position
     </button>
@@ -457,7 +453,7 @@ def _error_html(message: str) -> str:
 <div class="card">
   <div class="icon">❌</div>
   <h1>{safe_message}</h1>
-  <p>Ce lien n'est plus valide. Contactez le expediteur pour obtenir un nouveau lien.</p>
+  <p>Ce lien n'est plus valide. Contactez l’expéditeur pour obtenir un nouveau lien.</p>
 </div>
 </body>
 </html>"""
