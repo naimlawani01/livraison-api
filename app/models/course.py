@@ -27,6 +27,12 @@ class ModePaiement(str, enum.Enum):
     MOBILE_MONEY = "MOBILE_MONEY"
 
 
+class Payeur(str, enum.Enum):
+    """Qui règle la course (cf. services/pricing.py)."""
+    EXPEDITEUR = "expediteur"   # remet la part livreur ; commission prise sur son Crédit
+    CLIENT = "client"           # paie le prix complet en Mobile Money ; Crédit rendu
+
+
 class Course(Base):
     """Modèle pour les courses de livraison"""
     __tablename__ = "courses"
@@ -74,6 +80,7 @@ class Course(Base):
     # Paiement
     mode_paiement = Column(SQLEnum(ModePaiement), default=ModePaiement.CASH, nullable=False)
     paiement_confirme = Column(String(10), default="non", nullable=False)  # non, oui
+    payeur = Column(String(20), default=Payeur.EXPEDITEUR.value, server_default="expediteur", nullable=False)
     geniuspay_reference = Column(String(100), nullable=True)
     geniuspay_checkout_url = Column(Text, nullable=True)
     
@@ -115,6 +122,15 @@ class Course(Base):
     expediteur = relationship("Expediteur", back_populates="courses")
     livreur = relationship("Livreur", back_populates="courses")
     
+    @property
+    def montant_a_encaisser(self) -> float:
+        """Montant que le payeur règle pour la course : le prix complet si c'est le
+        client (Mobile Money), la part livreur si c'est l'expéditeur (sa commission
+        étant déjà prise sur son Crédit)."""
+        if self.payeur == Payeur.CLIENT.value:
+            return self.prix_propose
+        return self.montant_livreur
+
     def __repr__(self):
         return f"<Course {self.numero_course} - {self.status}>"
     

@@ -112,7 +112,9 @@ class TestCreation:
         cmd = await create_course(_payload(ModePaiement.CASH), p, session)
         assert cmd.status == CourseStatus.CREEE
         assert cmd.commission_plateforme == 1_200      # 12 % de 10 000 (plancher)
-        assert cmd.montant_livreur == 10_000     # 100 % au livreur
+        assert cmd.montant_livreur == 8_800      # 88 % au livreur
+        assert cmd.payeur == "expediteur"          # défaut cash
+        assert cmd.montant_a_encaisser == 8_800  # remis par l'expéditeur au livreur
         assert await credit_service.credit_disponible(session, p.id) == 48_800
 
     async def test_credit_insuffisant_bloque_la_creation(self, session):
@@ -137,8 +139,30 @@ class TestCreation:
         from app.services import credit_service
         _, p = await _creer_expediteur(session, credit=50_000)
         cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
-        assert cmd.montant_livreur == 10_000
-        assert await credit_service.credit_disponible(session, p.id) == 48_800
+        assert cmd.montant_livreur == 8_800
+        assert cmd.payeur == "client"             # défaut Mobile Money
+        assert cmd.montant_a_encaisser == 10_000  # le client paie le prix complet
+        assert await credit_service.credit_disponible(session, p.id) == 48_800  # garantie
+
+    async def test_client_ne_peut_pas_payer_en_especes(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, Payeur
+        _, p = await _creer_expediteur(session, credit=50_000)
+        payload = _payload(ModePaiement.CASH)
+        payload.payeur = Payeur.CLIENT
+        with pytest.raises(HTTPException) as exc:
+            await create_course(payload, p, session)
+        assert exc.value.status_code == 400
+
+    async def test_expediteur_paie_en_mobile_money(self, session):
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, Payeur
+        _, p = await _creer_expediteur(session, credit=50_000)
+        payload = _payload(ModePaiement.MOBILE_MONEY)
+        payload.payeur = Payeur.EXPEDITEUR
+        cmd = await create_course(payload, p, session)
+        assert cmd.montant_a_encaisser == 8_800   # il ne règle que la part livreur
 
     async def test_momo_credit_insuffisant_bloque_la_creation(self, session):
         from fastapi import HTTPException

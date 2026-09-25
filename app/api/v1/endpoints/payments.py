@@ -10,6 +10,7 @@ POST /payments/webhooks/geniuspay
 """
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -79,7 +80,7 @@ async def relancer_paiement(
         paiement = await genius_pay_service.initier_paiement(
             course_id=str(course.id),
             expediteur_id=str(expediteur.id),
-            montant=course.prix_propose,
+            montant=course.montant_a_encaisser,
             description=f"Livraison {course.numero_course}",
             nom_client=course.contact_client_nom,
         )
@@ -185,8 +186,13 @@ async def webhook_geniuspay(
         if not course_id:
             logger.error("payment.success sans course_id dans metadata")
             return {"ok": False, "reason": "missing_course_id"}
+        try:
+            course_uuid = uuid.UUID(str(course_id))
+        except ValueError:
+            logger.error("payment.success — course_id invalide: %s", course_id)
+            return {"ok": False, "reason": "bad_course_id"}
 
-        q = select(Course).where(Course.id == course_id)
+        q = select(Course).where(Course.id == course_uuid)
         r = await db.execute(q)
         course: Optional[Course] = r.scalar_one_or_none()
 
@@ -202,6 +208,17 @@ async def webhook_geniuspay(
         course.paiement_confirme = "oui"
         course.geniuspay_reference = data.get("reference", course.geniuspay_reference)
         await db.commit()
+
+        # Le client a payé le prix complet (commission incluse) → la commission
+        # réservée en garantie sur le Crédit de l'expéditeur lui est rendue.
+        if course.payeur == "client":
+            try:
+                await credit_service.restituer_commission(
+                    db, course.expediteur_id, course.id,
+                    description=f"Commission couverte par le client — course #{course.numero_course}",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error("payment.success — restitution Crédit échouée (course %s): %s", course_id, e)
 
         # Récupérer le expediteur pour avoir ses coordonnées
         q_p = select(Expediteur).where(Expediteur.id == course.expediteur_id)

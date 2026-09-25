@@ -3,16 +3,22 @@
 Le prix d'une course est fonction de la distance (point de retrait de
 l'expéditeur → quartier de destination).
 
-Modèle « l'expéditeur cherche un livreur » : l'expéditeur règle le livreur (lui-même
-ou via son client, en cash ou Mobile Money) et paie à Sönaiyaa une commission de
-mise en relation **en plus**, débitée de son Crédit — identique quel que soit le
-mode de paiement.
+Modèle « l'expéditeur cherche un livreur » — identique en cash et Mobile Money :
 
     prix         = arrondi(PRIX_BASE + PRIX_KM × distance_km) × mult_colis
-    gain_livreur = prix                        (100 % au livreur)
-    commission   = prix × TAUX_COMMISSION      (en sus, débitée du Crédit de l'expéditeur)
+    commission   = prix × TAUX_COMMISSION      (part Sönaiyaa, supportée par le livreur)
+    gain_livreur = prix − commission           (ce que touche le livreur)
 
-Invariant garanti : ``gain_livreur == prix``.
+La commission est **garantie par le Crédit de l'expéditeur** (débitée à la
+création) : Sönaiyaa ne la réclame jamais au livreur. Qui règle la course
+(``Course.payeur``) :
+
+* ``expediteur`` : il remet ``gain_livreur`` au livreur (cash à la récupération,
+  ou Mobile Money) — coût total pour lui = ``prix``.
+* ``client`` (Mobile Money obligatoire) : le client paie ``prix`` ; au paiement,
+  la commission est rendue au Crédit de l'expéditeur — coût pour lui = 0.
+
+Invariant garanti : ``commission + gain_livreur == prix``.
 
 Ce module est volontairement **pur** (aucune dépendance DB ni settings) afin de
 rester déterministe et testable sans environnement. Il remplace l'ancienne
@@ -44,11 +50,11 @@ MULT_COLIS_DEFAUT: float = 1.0
 class Tarif:
     """Décomposition financière d'une course.
 
-    Invariant : ``gain_livreur == prix`` (la commission est payée en sus).
+    Invariant : ``commission + gain_livreur == prix``.
     """
-    prix: int             # prix de la livraison, payé au livreur (par l'expéditeur ou son client)
-    commission: int       # commission Sönaiyaa, en sus, débitée du Crédit de l'expéditeur
-    gain_livreur: int     # part livreur = prix (cash ou crédité sur ses Gains)
+    prix: int             # coût total de la course (payé par l'expéditeur ou son client)
+    commission: int       # part Sönaiyaa, garantie par le Crédit de l'expéditeur
+    gain_livreur: int     # part livreur (cash de l'expéditeur, ou crédité sur ses Gains)
     distance_km: float
     type_colis: str
     mult_colis: float
@@ -79,7 +85,7 @@ def calculer_tarif(distance_km: float, type_colis: str = "standard") -> Tarif:
     prix = max(PRIX_BASE, _arrondir(brut))
 
     commission = int(round(prix * TAUX_COMMISSION))
-    gain_livreur = prix
+    gain_livreur = prix - commission
 
     return Tarif(
         prix=prix,

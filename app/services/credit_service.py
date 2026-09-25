@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.expediteur import Expediteur
@@ -83,17 +83,19 @@ async def recharger(
     return txn
 
 
-async def commission_reservee(db: AsyncSession, course_id) -> bool:
-    """La commission de cette course a-t-elle été débitée du Crédit ?
+async def commission_reservee(db: AsyncSession, course_id) -> float:
+    """Commission de cette course encore retenue sur le Crédit (débits − remboursements).
 
-    Faux pour les courses Mobile Money antérieures au débit systématique : il ne
-    faut alors ni les rembourser ni les ajuster.
+    0 pour une course dont la commission a déjà été rendue (paiement client,
+    annulation) ou pour une course Mobile Money antérieure au débit systématique :
+    il ne faut alors ni rembourser ni ajuster.
     """
-    q = select(CreditTransaction.id).where(
+    q = select(CreditTransaction.type, func.sum(CreditTransaction.montant)).where(
         CreditTransaction.course_id == course_id,
-        CreditTransaction.type == "commission",
-    ).limit(1)
-    return (await db.execute(q)).first() is not None
+        CreditTransaction.type.in_(("commission", "remboursement")),
+    ).group_by(CreditTransaction.type)
+    totaux = dict((await db.execute(q)).all())
+    return round(max(0.0, (totaux.get("commission") or 0) - (totaux.get("remboursement") or 0)), 2)
 
 
 async def debiter_commission(
@@ -128,6 +130,29 @@ async def debiter_commission(
     await db.commit()
     await db.refresh(txn)
     return txn
+
+
+async def restituer_commission(
+    db: AsyncSession,
+    expediteur_id,
+    course_id,
+    *,
+    description: Optional[str] = None,
+) -> Optional[CreditTransaction]:
+    """Rend au Crédit la commission encore réservée pour cette course.
+
+    Le montant est calculé **sous verrou** de la ligne expéditeur : deux appels
+    concurrents (annulation + paiement client) ne peuvent pas rembourser deux fois.
+    Retourne None s'il n'y a rien à rendre.
+    """
+    await _lock_expediteur(db, expediteur_id)
+    reservee = await commission_reservee(db, course_id)
+    if reservee <= 0:
+        await db.commit()  # libère le verrou
+        return None
+    return await rembourser_commission(
+        db, expediteur_id, reservee, course_id=course_id, description=description,
+    )
 
 
 async def rembourser_commission(

@@ -85,6 +85,7 @@ async def location_page(token: str, db: AsyncSession = Depends(get_db)):
 
         if (
             course.mode_paiement == ModePaiement.MOBILE_MONEY
+            and course.payeur == "client"
             and course.geniuspay_checkout_url
             and course.paiement_confirme != "oui"
         ):
@@ -138,8 +139,9 @@ async def submit_location(
             "message": "Position déjà enregistrée",
             "already_shared": True,
             "mode_paiement": course.mode_paiement.value if hasattr(course.mode_paiement, "value") else course.mode_paiement,
-            "prix": course.prix_propose,
-            "checkout_url": course.geniuspay_checkout_url,
+            # Le client ne voit un montant / lien que s'il est le payeur.
+            "prix": course.prix_propose if course.payeur == "client" else None,
+            "checkout_url": course.geniuspay_checkout_url if course.payeur == "client" else None,
             "tracking_url": tracking_url,
         }
 
@@ -171,7 +173,7 @@ async def submit_location(
 
         # Ajuster le Crédit de l'expéditeur du delta de commission (réservée au
         # plancher à la création).
-        if await credit_service.commission_reservee(db, course.id):
+        if await credit_service.commission_reservee(db, course.id) > 0:
             await credit_service.ajuster_commission(
                 db, course.expediteur_id, ancienne_commission, tarif.commission,
                 course_id=course.id,
@@ -192,7 +194,7 @@ async def submit_location(
             paiement = await genius_pay_service.initier_paiement(
                 course_id=str(course.id),
                 expediteur_id=str(course.expediteur_id),
-                montant=course.prix_propose,
+                montant=course.montant_a_encaisser,
                 description=f"Livraison {course.numero_course}",
                 nom_client=course.contact_client_nom,
             )
@@ -220,8 +222,8 @@ async def submit_location(
         "message": "Position enregistrée avec succès",
         "already_shared": False,
         "mode_paiement": course.mode_paiement.value if hasattr(course.mode_paiement, "value") else course.mode_paiement,
-        "prix": course.prix_propose,
-        "checkout_url": checkout_url,
+        "prix": course.prix_propose if course.payeur == "client" else None,
+        "checkout_url": checkout_url if course.payeur == "client" else None,
         "tracking_url": tracking_url,
     }
 
@@ -319,8 +321,10 @@ function showActionStep(data) {{
   const btn = document.getElementById('actionBtn');
   const hint = document.getElementById('actionHint');
 
-  priceBlock.innerHTML = '<div class="price-label">Prix de la livraison</div>'
-    + '<div class="price-value">' + fmtMontant(data.prix || 0) + '</div>';
+  priceBlock.innerHTML = data.prix
+    ? '<div class="price-label">Prix de la livraison</div>'
+      + '<div class="price-value">' + fmtMontant(data.prix) + '</div>'
+    : '<div class="price-label">Livraison réglée par l’expéditeur</div>';
 
   if (data.mode_paiement === 'MOBILE_MONEY' && data.checkout_url) {{
     btn.textContent = 'Payer maintenant';
@@ -329,7 +333,7 @@ function showActionStep(data) {{
   }} else {{
     btn.textContent = 'Suivre ma livraison';
     btn.onclick = function() {{ window.location.href = data.tracking_url; }};
-    hint.textContent = 'Le livreur vous appellera pour le règlement en espèces.';
+    hint.textContent = 'Vous n’avez rien à payer au livreur.';
   }}
 }}
 

@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from ..models.course import CourseStatus, ModePaiement
+from ..models.course import CourseStatus, ModePaiement, Payeur
 from ..utils.phone import normalize_guinea_phone, InvalidGuineaPhoneError
 
 
@@ -35,6 +35,11 @@ class CourseCreate(CourseBase):
     longitude_client: Optional[float] = Field(None, ge=-180, le=180)
     prix_propose: float = Field(..., gt=0, description="Prix proposé pour la livraison")
     mode_paiement: ModePaiement = Field(default=ModePaiement.CASH, description="Mode de paiement")
+    payeur: Optional[Payeur] = Field(
+        default=None,
+        description="Qui règle la course : expediteur | client (client ⇒ Mobile Money). "
+                    "Par défaut : client si Mobile Money, expediteur si cash.",
+    )
     exige_code_livraison: Optional[bool] = Field(default=False, description="Exiger un code PIN à la livraison")
     nature_colis: str = Field(default="standard", description="standard | alimentaire | fragile | documents | volumineux")
 
@@ -67,8 +72,11 @@ class CourseResponse(CourseBase):
     commission_plateforme: float
     montant_livreur: float
     mode_paiement: ModePaiement
+    payeur: str = Payeur.EXPEDITEUR.value
+    montant_a_encaisser: float
     paiement_confirme: str
     geniuspay_reference: Optional[str] = None
+    geniuspay_checkout_url: Optional[str] = None
     exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]
@@ -130,6 +138,8 @@ class CourseDisponibleResponse(BaseModel):
     status: CourseStatus
     created_at: datetime
     mode_paiement: Optional[str] = "CASH"
+    payeur: str = Payeur.EXPEDITEUR.value
+    montant_a_encaisser: float
     paiement_confirme: Optional[str] = "non"
     exige_code_livraison: bool
     

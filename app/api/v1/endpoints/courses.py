@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from ....core.database import get_db
 from ....core.config import settings
-from ....models.course import Course, CourseStatus, ModePaiement
+from ....models.course import Course, CourseStatus, ModePaiement, Payeur
 from ....models.expediteur import Expediteur
 from ....models.livreur import Livreur
 from ....models.user import User, UserRole
@@ -114,6 +114,18 @@ async def create_course(
             detail="Votre compte expéditeur doit être vérifié par un administrateur avant de pouvoir créer des courses"
         )
 
+    # Qui règle la course. Par défaut (apps antérieures) : le client en Mobile
+    # Money, l'expéditeur en cash. Un client ne règle jamais en espèces : la
+    # commission ne pourrait pas lui être reprise sans créer une dette livreur.
+    payeur = course_data.payeur or (
+        Payeur.CLIENT if course_data.mode_paiement == ModePaiement.MOBILE_MONEY else Payeur.EXPEDITEUR
+    )
+    if payeur == Payeur.CLIENT and course_data.mode_paiement != ModePaiement.MOBILE_MONEY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Si votre client règle la course, le paiement se fait par Mobile Money.",
+        )
+
     has_position = (
         course_data.latitude_client is not None
         and course_data.longitude_client is not None
@@ -158,6 +170,7 @@ async def create_course(
         commission_plateforme=commission,
         montant_livreur=montant_livreur,
         mode_paiement=course_data.mode_paiement,
+        payeur=payeur.value,
         distance_km=distance_km,
         duree_estimee_minutes=duree_estimee,
         status=CourseStatus.CREEE,
@@ -173,7 +186,7 @@ async def create_course(
     await db.flush()  # obtient course.id sans committer (FK du débit Crédit)
 
     # Réserver la commission sur le Crédit de l'expéditeur — cash ET Mobile Money
-    # (commission de mise en relation payée en sus par l'expéditeur, cf. pricing.py).
+    # (garantie ; rendue si c'est le client qui paie, cf. pricing.py).
     # Le débit atomique EST le garde-fou : Crédit insuffisant → rien n'est créé.
     try:
         await credit_service.debiter_commission(
@@ -202,13 +215,16 @@ async def create_course(
                 paiement = await genius_pay_service.initier_paiement(
                     course_id=str(course.id),
                     expediteur_id=str(expediteur.id),
-                    montant=course.prix_propose,
+                    montant=course.montant_a_encaisser,
                     description=f"Livraison {course.numero_course}",
                     nom_client=course.contact_client_nom,
                 )
                 course.geniuspay_reference = paiement.get("reference")
                 course.geniuspay_checkout_url = paiement.get("checkout_url")
-                checkout_url = course.geniuspay_checkout_url
+                # Le lien part par SMS au client seulement s'il est le payeur ;
+                # sinon l'expéditeur le reçoit dans la réponse (geniuspay_checkout_url).
+                if payeur == Payeur.CLIENT:
+                    checkout_url = course.geniuspay_checkout_url
                 await db.commit()
                 # MM : on attend le webhook payment.success pour diffuser
             except Exception as e:  # noqa: BLE001
@@ -242,7 +258,7 @@ async def create_course(
             nom_client=course.contact_client_nom,
             numero_course=course.numero_course,
             expediteur_nom=expediteur.nom,
-            montant=course.prix_propose if has_position else 0,
+            montant=course.prix_propose if has_position and payeur == Payeur.CLIENT else 0,
             tracking_url=action_url,
             checkout_url=checkout_url,
             position_required=not has_position,
@@ -353,6 +369,8 @@ async def get_courses_disponibles(
             status=course.status,
             created_at=course.created_at,
             mode_paiement=course.mode_paiement,
+            payeur=course.payeur,
+            montant_a_encaisser=course.montant_a_encaisser,
             paiement_confirme=course.paiement_confirme,
             exige_code_livraison=course.exige_code_livraison,
             expediteur_nom=expediteur.nom,
@@ -576,7 +594,7 @@ async def update_course_status(
                 statut="complete",
             )
             db.add(txn)
-        # CASH : le livreur a été réglé en espèces directement par l'expéditeur, et la
+        # CASH : l'expéditeur a remis la part livreur en espèces à la récupération, et la
         # commission a déjà été prélevée sur le Crédit de l'expéditeur à la création de
         # la course. Rien à débiter côté livreur — plus de dette, plus de solde négatif.
         
@@ -679,16 +697,15 @@ async def annuler_course(
                 livreur.is_en_course = False
                 livreur.is_disponible = True
     
-    # Rembourser la commission réservée sur le Crédit de l'expéditeur.
-    if course.commission_plateforme and await credit_service.commission_reservee(db, course.id):
-        try:
-            await credit_service.rembourser_commission(
-                db, course.expediteur_id, course.commission_plateforme,
-                course_id=course.id,
-                description=f"Remboursement course annulée #{course.numero_course}",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Remboursement Crédit échoué (course %s): %s", course.id, e)
+    # Rembourser la commission encore réservée sur le Crédit de l'expéditeur
+    # (0 si déjà rendue au paiement client, ou course antérieure sans réservation).
+    try:
+        await credit_service.restituer_commission(
+            db, course.expediteur_id, course.id,
+            description=f"Remboursement course annulée #{course.numero_course}",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Remboursement Crédit échoué (course %s): %s", course.id, e)
 
     course.status = CourseStatus.ANNULEE
     course.annulee_at = datetime.now(timezone.utc)

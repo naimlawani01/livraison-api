@@ -119,3 +119,69 @@ class TestWebhookRecharge:
         }
         res = await webhook_geniuspay(_make_request(payload), session)
         assert res["ok"] is False
+
+
+# ── Paiement client d'une course : Crédit rendu à l'expéditeur ────────────────
+
+def _course_payload(course_id, reference):
+    return {
+        "event": "payment.success",
+        "data": {"reference": reference, "metadata": {"course_id": str(course_id)}},
+    }
+
+
+class TestWebhookPaiementCourse:
+    @pytest.fixture(autouse=True)
+    def _stubs(self, monkeypatch):
+        from app.services import sms_service as sms_mod
+        from app.services.matching_service import MatchingService
+
+        async def _noop(*a, **k):
+            return 0
+        monkeypatch.setattr(sms_mod.sms_service, "envoyer_sms_course", _noop)
+        monkeypatch.setattr(MatchingService, "diffuser_course", _noop)
+
+    async def _creer_course(self, session, payeur):
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement
+        from app.schemas.course import CourseCreate
+        user, p = await _creer_expediteur(session, credit=50_000)
+        payload = CourseCreate(
+            contact_client_nom="Client", contact_client_telephone="620000000",
+            prix_propose=1, mode_paiement=ModePaiement.MOBILE_MONEY, payeur=payeur,
+            exige_code_livraison=False,
+        )
+        cmd = await create_course(payload, p, session)
+        return user, p, cmd
+
+    async def test_paiement_client_rend_la_commission(self, session):
+        from app.api.v1.endpoints.payments import webhook_geniuspay
+        from app.models.course import Payeur
+        from app.services import credit_service
+        _, p, cmd = await self._creer_course(session, Payeur.CLIENT)
+        assert await credit_service.credit_disponible(session, p.id) == 48_800
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-1")), session)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000
+        # rejouer le webhook ne rend rien de plus
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-1")), session)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000
+
+    async def test_annulation_apres_paiement_client_ne_rembourse_pas_deux_fois(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.api.v1.endpoints.payments import webhook_geniuspay
+        from app.models.course import Payeur
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        user, p, cmd = await self._creer_course(session, Payeur.CLIENT)
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-2")), session)
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user, session)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000
+
+    async def test_paiement_expediteur_garde_la_commission(self, session):
+        from app.api.v1.endpoints.payments import webhook_geniuspay
+        from app.models.course import Payeur
+        from app.services import credit_service
+        _, p, cmd = await self._creer_course(session, Payeur.EXPEDITEUR)
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-3")), session)
+        assert await credit_service.credit_disponible(session, p.id) == 48_800
+
