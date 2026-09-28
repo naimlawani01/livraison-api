@@ -1109,3 +1109,37 @@ async def marquer_rembourse(
     c.rembourse_at = datetime.now(timezone.utc)
     await db.commit()
     return {"message": "Remboursement marqué comme effectué", "montant": c.remboursement_du}
+
+
+# ── Anti-fraude : livraisons loin de l'adresse déclarée ───────────────────────
+
+@router.get("/courses/suspectes")
+async def lister_courses_suspectes(
+    seuil_km: Optional[float] = None,
+    limit: int = Query(100, le=500),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Courses livrées loin de l'adresse déclarée du client (fausse adresse pour
+    payer moins, ou fausse livraison). Seuil par défaut : SEUIL_ECART_LIVRAISON_KM."""
+    from ....core.config import settings
+    seuil = seuil_km if seuil_km is not None else settings.SEUIL_ECART_LIVRAISON_KM
+    courses = (await db.execute(
+        select(Course)
+        .where(Course.ecart_livraison_km > seuil)
+        .order_by(Course.livree_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "course_id": str(c.id),
+            "numero_course": c.numero_course,
+            "expediteur_id": str(c.expediteur_id),
+            "livreur_id": str(c.livreur_id) if c.livreur_id else None,
+            "ecart_km": c.ecart_livraison_km,
+            "distance_facturee_km": c.distance_km,
+            "prix": c.prix_propose,
+            "livree_at": c.livree_at.isoformat() if c.livree_at else None,
+        }
+        for c in courses
+    ]

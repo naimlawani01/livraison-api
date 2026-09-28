@@ -74,6 +74,8 @@ class UserLogin(BaseModel):
     """Schéma pour connexion (tolérant pour ne pas bloquer les comptes existants)"""
     phone: str
     password: Optional[str] = None
+    # 2e facteur (admin) : code reçu par SMS après un premier appel mot de passe seul.
+    otp_code: Optional[str] = None
 
     _normalize_phone = field_validator("phone")(lambda cls, v: _normalize_phone_lenient(v))
 

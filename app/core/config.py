@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # Course en récupération / livraison depuis plus longtemps que ce délai
     # (depuis l'acceptation) → alerte admin + expéditeur (colis possiblement perdu).
     DELAI_ALERTE_COURSE_MINUTES: int = 180
+
+    # Sécurité — double authentification admin : mot de passe + code SMS.
+    # Passer à False seulement le temps que l'admin-web gère `otp_required`.
+    ADMIN_2FA_ENABLED: bool = True
+    # Écart (km) entre la position du livreur à la livraison et l'adresse
+    # déclarée du client au-delà duquel la course est signalée (fraude au prix).
+    SEUIL_ECART_LIVRAISON_KM: float = 1.0
     
     # Commission — nouveau modèle : 12 %. Source de vérité canonique dans
     # app/services/pricing.py (TAUX_COMMISSION). Ce paramètre reste pour le code

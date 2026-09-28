@@ -382,6 +382,7 @@ async def root():
 
 
 @app.get("/health")
+@limiter.exempt
 async def health_check():
     """Liveness probe (rapide, ~ms) — utilisé par Railway et les LB.
 
@@ -399,6 +400,7 @@ async def health_check():
 
 
 @app.get("/health/deep")
+@limiter.exempt
 async def health_deep():
     """Readiness probe (lent, ~50-200ms) — utilisé par UptimeRobot/BetterStack.
 

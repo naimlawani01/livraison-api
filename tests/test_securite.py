@@ -127,3 +127,133 @@ class TestLivreurQuiDisparait(_CourseMobileMoney):
         assert res["alertes"] == 1
         await session.refresh(cmd)
         assert cmd.status.value == "EN_LIVRAISON"   # aucune action automatique
+
+
+# ── Failles restantes : 2FA admin, squat de numéro, rate-limit, fraude livraison ─
+
+def _req(path="/api/v1/auth/login", headers=None):
+    from starlette.requests import Request
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    hdrs = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    return Request({"type": "http", "method": "POST", "path": path, "headers": hdrs,
+                    "query_string": b"", "client": (f"10.0.{uuid.uuid4().int % 250}.1", 1234)}, receive)
+
+
+async def _user(session, role, verified=True, password=None, age=timedelta(0)):
+    from app.core.security import get_password_hash
+    from app.models.user import User, UserRole
+    u = User(id=uuid.uuid4(), phone=f"+22462{uuid.uuid4().int % 10_000_000:07d}", role=UserRole(role),
+             is_verified=verified, password_hash=get_password_hash(password) if password else None,
+             created_at=datetime.now(timezone.utc) - age)
+    session.add(u)
+    await session.commit()
+    return u
+
+
+@pytest.fixture
+def sms_captures(monkeypatch):
+    from app.services.sms_service import sms_service
+    envoyes = []
+
+    async def _otp(phone, code):
+        envoyes.append(code)
+        return True
+    monkeypatch.setattr(sms_service, "envoyer_otp", _otp)
+    return envoyes
+
+
+class TestAdmin2FA:
+    async def test_mot_de_passe_seul_ne_suffit_pas(self, session, sms_captures):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.auth import login
+        from app.schemas.user import UserLogin
+        admin = await _user(session, "ADMIN", password="MotDePasseAdmin!2026")
+        with pytest.raises(HTTPException) as exc:
+            await login(_req(), UserLogin(phone=admin.phone, password="MotDePasseAdmin!2026"), session)
+        assert exc.value.detail == "otp_required"
+        assert len(sms_captures) == 1
+        # mot de passe + bon code → tokens
+        res = await login(_req(), UserLogin(phone=admin.phone, password="MotDePasseAdmin!2026",
+                                            otp_code=sms_captures[0]), session)
+        assert res.access_token
+
+    async def test_mauvais_code_refuse(self, session, sms_captures):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.auth import login
+        from app.schemas.user import UserLogin
+        admin = await _user(session, "ADMIN", password="MotDePasseAdmin!2026")
+        with pytest.raises(HTTPException):
+            await login(_req(), UserLogin(phone=admin.phone, password="MotDePasseAdmin!2026"), session)
+        with pytest.raises(HTTPException) as exc:
+            await login(_req(), UserLogin(phone=admin.phone, password="MotDePasseAdmin!2026",
+                                          otp_code="000000" if sms_captures[0] != "000000" else "111111"), session)
+        assert exc.value.status_code == 401
+
+    async def test_admin_ne_se_connecte_pas_par_sms_seul(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.auth import verify_otp
+        from app.schemas.user import OTPVerify
+        admin = await _user(session, "ADMIN", password="MotDePasseAdmin!2026")
+        admin.otp_code, admin.otp_expires_at = "123456", datetime.now(timezone.utc) + timedelta(minutes=5)
+        await session.commit()
+        with pytest.raises(HTTPException) as exc:
+            await verify_otp(_req("/api/v1/auth/verify-otp"), OTPVerify(phone=admin.phone, otp_code="123456"), session)
+        assert exc.value.status_code == 403
+
+
+class TestSquatNumero:
+    async def test_compte_non_verifie_ancien_est_remplace(self, session):
+        from app.api.v1.endpoints.auth import register
+        from app.schemas.user import UserCreate
+        squat = await _user(session, "LIVREUR", verified=False, password="Squatteur!2026x", age=timedelta(hours=2))
+        phone = squat.phone
+        res = await register(_req("/api/v1/auth/register"), UserCreate(phone=phone, role="EXPEDITEUR"), session)
+        assert res.user.role.value == "EXPEDITEUR"
+
+    async def test_compte_verifie_reste_protege(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.auth import register
+        from app.schemas.user import UserCreate
+        u = await _user(session, "LIVREUR", verified=True)
+        with pytest.raises(HTTPException):
+            await register(_req("/api/v1/auth/register"), UserCreate(phone=u.phone, role="LIVREUR"), session)
+
+    async def test_mot_de_passe_plante_efface_a_la_verification_tardive(self, session):
+        from app.api.v1.endpoints.auth import verify_otp
+        from app.schemas.user import OTPVerify
+        u = await _user(session, "EXPEDITEUR", verified=False, password="Squatteur!2026x", age=timedelta(hours=2))
+        u.otp_code, u.otp_expires_at = "654321", datetime.now(timezone.utc) + timedelta(minutes=5)
+        await session.commit()
+        await verify_otp(_req("/api/v1/auth/verify-otp"), OTPVerify(phone=u.phone, otp_code="654321"), session)
+        await session.refresh(u)
+        assert u.is_verified and u.password_hash is None
+
+
+class TestRateLimitParUtilisateur:
+    def test_requete_authentifiee_comptee_par_utilisateur(self):
+        from app.core.rate_limit import _key_func
+        from app.core.security import create_access_token
+        token = create_access_token({"sub": "abc", "role": "LIVREUR"})
+        assert _key_func(_req(headers={"Authorization": f"Bearer {token}"})) == "user:abc"
+
+    def test_token_forge_retombe_sur_l_ip(self):
+        from app.core.rate_limit import _key_func
+        assert not _key_func(_req(headers={"Authorization": "Bearer faux.token.x"})).startswith("user:")
+
+
+class TestFraudeLivraison(_CourseMobileMoney):
+    async def test_ecart_enregistre_quand_livre_loin_de_l_adresse(self, session):
+        from app.api.v1.endpoints.courses import update_course_status
+        from app.models.course import CourseStatus, Payeur
+        _, p, cmd = await self._creer_course(session, Payeur.CLIENT)
+        _, liv = await _livreur(session)
+        cmd.livreur_id, cmd.status, cmd.paiement_confirme = liv.id, CourseStatus.EN_LIVRAISON, "oui"
+        cmd.exige_code_livraison = False
+        cmd.latitude_client, cmd.longitude_client = 9.5400, -13.6800
+        liv.latitude, liv.longitude = 9.6400, -13.5800   # ~15 km plus loin
+        await session.commit()
+        await update_course_status(cmd.id, CourseStatus.TERMINEE, None, liv, session)
+        await session.refresh(cmd)
+        assert cmd.ecart_livraison_km > 10

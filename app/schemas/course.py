@@ -81,6 +81,7 @@ class CourseResponse(CourseBase):
     geniuspay_checkout_url: Optional[str] = None
     remboursement_du: Optional[float] = None
     rembourse_at: Optional[datetime] = None
+    ecart_livraison_km: Optional[float] = None
     exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]
