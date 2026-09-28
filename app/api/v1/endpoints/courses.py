@@ -21,10 +21,11 @@ from ....schemas.course import (
 from ....services.matching_service import MatchingService
 from ....services.geolocation_service import GeolocationService
 from ....services.notification_service import notification_service
-from ....services import pricing, credit_service, soldes
+from ....services import pricing, credit_service, soldes, remboursement_service
 from ....utils.dependencies import get_current_expediteur, get_current_livreur, get_current_user
 import logging
 import secrets
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -679,6 +680,15 @@ async def annuler_course(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cette course ne peut plus être annulée"
         )
+
+    # Colis en main : plus d'annulation par l'expéditeur ou le livreur (le livreur
+    # a pu recevoir la part livreur en espèces à la récupération). Seul l'admin
+    # tranche, après examen.
+    if course.status == CourseStatus.EN_LIVRAISON and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le colis a déjà été récupéré : contactez le support Sönaiyaa pour annuler."
+        )
     
     # Si un livreur était assigné, le libérer
     if course.livreur_id:
@@ -712,6 +722,8 @@ async def annuler_course(
     course.raison_annulation = annulation.raison
 
     await db.commit()
+    # Mobile Money déjà payé → avoir expéditeur ou remboursement client à tracer.
+    await remboursement_service.enregistrer_remboursement(db, course)
     await db.refresh(course)
     
     # Notifier le livreur (si assigné) et le expediteur de l'annulation
@@ -760,6 +772,41 @@ async def annuler_course(
     except Exception as e:
         logger.warning(f"Notification annulation échouée: {e}")
     
+    return course
+
+
+@router.post("/{course_id}/diffuser", response_model=CourseResponse)
+async def rediffuser_course(
+    course_id: UUID,
+    expediteur: Expediteur = Depends(get_current_expediteur),
+    db: AsyncSession = Depends(get_db)
+):
+    """Relancer la diffusion d'une course cash restée en attente (Crédit
+    insuffisant au recalcul du prix) — à appeler après recharge du Crédit."""
+    course = (await db.execute(select(Course).where(Course.id == course_id))).scalar_one_or_none()
+    if not course or course.expediteur_id != expediteur.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course non trouvée")
+    if course.status != CourseStatus.CREEE or course.mode_paiement != ModePaiement.CASH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Seule une course cash en attente peut être relancée ici.",
+        )
+    if course.latitude_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le client n'a pas encore partagé sa position.",
+        )
+    try:
+        await credit_service.completer_commission(db, course)
+    except soldes.SoldeInsuffisant:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Crédit insuffisant pour couvrir la commission. Rechargez votre Crédit.",
+        )
+    await MatchingService.diffuser_course(
+        db, course, expediteur.latitude, expediteur.longitude, expediteur_nom=expediteur.nom,
+    )
+    await db.refresh(course)
     return course
 
 

@@ -151,6 +151,7 @@ async def submit_location(
     course.location_shared_at = datetime.now(timezone.utc)
 
     # ── 2. Recalculer le prix selon distance + nature_colis ──────────────
+    commission_couverte = True
     expediteur_q = select(Expediteur).where(Expediteur.id == course.expediteur_id)
     expediteur_r = await db.execute(expediteur_q)
     expediteur: Optional[Expediteur] = expediteur_r.scalar_one_or_none()
@@ -161,7 +162,6 @@ async def submit_location(
             (data.latitude, data.longitude),
         )
         from ....services import pricing, credit_service
-        ancienne_commission = course.commission_plateforme or 0.0
         tarif = pricing.calculer_tarif(distance_km, course.nature_colis or "standard")
 
         course.distance_km = distance_km
@@ -171,13 +171,21 @@ async def submit_location(
         course.montant_livreur = tarif.gain_livreur
         await db.flush()
 
-        # Ajuster le Crédit de l'expéditeur du delta de commission (réservée au
-        # plancher à la création).
-        if await credit_service.commission_reservee(db, course.id) > 0:
-            await credit_service.ajuster_commission(
-                db, course.expediteur_id, ancienne_commission, tarif.commission,
-                course_id=course.id,
-            )
+        # Expéditeur payeur : compléter la commission (réservée au plancher à la
+        # création). Crédit insuffisant → la course ne part pas (ni diffusion ni
+        # lien de paiement) tant qu'il n'a pas rechargé, sinon Sönaiyaa perdrait
+        # le complément. Client payeur : rien à compléter, il paie le prix complet.
+        if (
+            course.payeur == "expediteur"
+            and await credit_service.commission_reservee(db, course.id) > 0
+        ):
+            from ....services import soldes
+            try:
+                await credit_service.completer_commission(db, course)
+            except soldes.SoldeInsuffisant:
+                commission_couverte = False
+                await db.commit()  # garde position + nouveau prix
+                await _prevenir_credit_insuffisant(db, expediteur, course)
 
     await db.commit()
     await db.refresh(course)
@@ -188,6 +196,7 @@ async def submit_location(
         course.mode_paiement == ModePaiement.MOBILE_MONEY
         and settings.GENIUSPAY_API_KEY
         and not course.geniuspay_reference
+        and commission_couverte
     ):
         try:
             from ....services import genius_pay_service
@@ -212,6 +221,7 @@ async def submit_location(
         course.mode_paiement == ModePaiement.CASH
         and course.status == CourseStatus.CREEE
         and expediteur
+        and commission_couverte
     ):
         await MatchingService.diffuser_course(
             db, course, expediteur.latitude, expediteur.longitude,
@@ -226,6 +236,29 @@ async def submit_location(
         "checkout_url": checkout_url if course.payeur == "client" else None,
         "tracking_url": tracking_url,
     }
+
+
+async def _prevenir_credit_insuffisant(db: AsyncSession, expediteur, course: Course) -> None:
+    """Push à l'expéditeur : sa course attend une recharge de Crédit."""
+    import logging
+    from ....models.user import User
+    from ....services.notification_service import notification_service
+
+    logging.getLogger(__name__).warning(
+        "Course en attente : Crédit insuffisant après recalcul du prix",
+        extra={"course_id": str(course.id)},
+    )
+    try:
+        user = (await db.execute(select(User).where(User.id == expediteur.user_id))).scalar_one_or_none()
+        if user and user.device_token:
+            await notification_service.envoyer_notification_push(
+                user.device_token,
+                titre="Crédit insuffisant",
+                message=f"La course #{course.numero_course} attend : rechargez votre Crédit puis relancez-la.",
+                data={"type": "credit_insuffisant", "course_id": str(course.id)},
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _location_html(token: str) -> str:

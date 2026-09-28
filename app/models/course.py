@@ -81,6 +81,10 @@ class Course(Base):
     mode_paiement = Column(SQLEnum(ModePaiement), default=ModePaiement.CASH, nullable=False)
     paiement_confirme = Column(String(10), default="non", nullable=False)  # non, oui
     payeur = Column(String(20), default=Payeur.EXPEDITEUR.value, server_default="expediteur", nullable=False)
+    # Paiement Mobile Money du client à rembourser (course payée puis annulée).
+    # Traité à la main par l'admin tant que le PSP n'expose pas de refund par API.
+    remboursement_du = Column(Float, nullable=True)
+    rembourse_at = Column(DateTime(timezone=True), nullable=True)
     geniuspay_reference = Column(String(100), nullable=True)
     geniuspay_checkout_url = Column(Text, nullable=True)
     
