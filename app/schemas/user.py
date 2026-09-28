@@ -59,6 +59,16 @@ class UserCreate(BaseModel):
     _normalize_phone = field_validator("phone")(lambda cls, v: _validate_phone(v))
     _validate_password = field_validator("password")(lambda cls, v: _check_password_strength(v))
 
+    @field_validator("role")
+    @classmethod
+    def _role_public(cls, v):
+        # SÉCURITÉ : l'inscription publique ne peut JAMAIS créer d'admin (sinon
+        # n'importe qui obtenait un token ADMIN en une requête). Les admins sont
+        # créés uniquement par scripts/init_db.py (ADMIN_PHONE / ADMIN_PASSWORD).
+        if v not in (UserRole.EXPEDITEUR, UserRole.LIVREUR):
+            raise ValueError("Rôle non autorisé à l'inscription")
+        return v
+
 
 class UserLogin(BaseModel):
     """Schéma pour connexion (tolérant pour ne pas bloquer les comptes existants)"""

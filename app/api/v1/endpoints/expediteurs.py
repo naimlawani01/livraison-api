@@ -10,7 +10,7 @@ from ....schemas.expediteur import (
     ExpediteurUpdate,
     ExpediteurResponse
 )
-from ....utils.dependencies import get_current_user, get_current_expediteur
+from ....utils.dependencies import get_current_user, get_current_expediteur, get_current_admin
 from ....services.storage_service import storage_service
 
 router = APIRouter()
@@ -71,6 +71,19 @@ async def update_my_expediteur(
 ):
     """Mettre à jour mon profil expediteur"""
     update_dict = expediteur_data.model_dump(exclude_unset=True)
+
+    # SÉCURITÉ / FRAUDE : le prix dépend de la distance point de retrait → client.
+    # Un expéditeur vérifié qui déplace son adresse près de ses clients paierait
+    # moins de commission (et sous-paierait les livreurs). Changement d'adresse =
+    # via le support, qui re-vérifie.
+    champs_lieu = {"latitude", "longitude", "adresse"} & update_dict.keys()
+    if expediteur.is_verified and any(
+        update_dict[c] != getattr(expediteur, c) for c in champs_lieu
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pour changer l'adresse de retrait d'un compte vérifié, contactez le support Sönaiyaa.",
+        )
     
     for key, value in update_dict.items():
         setattr(expediteur, key, value)
@@ -113,9 +126,10 @@ async def delete_my_account(
 async def list_expediteurs(
     skip: int = 0,
     limit: int = 50,
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Lister les expediteurs (pour admin ou public)"""
+    """Lister les expediteurs (admin uniquement — exposait RCCM, e-mail…)."""
     query = select(Expediteur).offset(skip).limit(limit)
     result = await db.execute(query)
     expediteurs = result.scalars().all()
@@ -126,9 +140,10 @@ async def list_expediteurs(
 @router.get("/{expediteur_id}", response_model=ExpediteurResponse)
 async def get_expediteur(
     expediteur_id: str,
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir un expediteur par ID"""
+    """Obtenir un expediteur par ID (admin uniquement)."""
     query = select(Expediteur).where(Expediteur.id == expediteur_id)
     result = await db.execute(query)
     expediteur = result.scalar_one_or_none()

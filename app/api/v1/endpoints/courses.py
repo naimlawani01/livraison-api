@@ -264,6 +264,7 @@ async def create_course(
             tracking_url=action_url,
             checkout_url=checkout_url,
             position_required=not has_position,
+            code_livraison=course.code_livraison,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(f"SMS course {course.numero_course} non envoyé : {e}")
