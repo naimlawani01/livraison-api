@@ -29,7 +29,21 @@ def _key_func(request) -> str:
     ce champ ne contient la VRAIE IP client que si uvicorn tourne avec
     `--proxy-headers --forwarded-allow-ips=*` (cf. start.sh) — sinon c'est l'IP
     du proxy et le rate-limit devient global. Ce flag est activé au démarrage.
+
+    Requête authentifiée (JWT valide) → compteur **par utilisateur** : en Guinée,
+    beaucoup d'abonnés mobiles partagent la même IP publique (CGNAT opérateur) ;
+    compter par IP bloquerait des dizaines d'utilisateurs légitimes d'un coup.
+    Le JWT est vérifié (signature) : impossible de forger une clé.
     """
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        try:
+            from jose import jwt
+            payload = jwt.decode(auth[7:], settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            if payload.get("sub"):
+                return f"user:{payload['sub']}"
+        except Exception:  # noqa: BLE001 — token invalide/expiré : repli sur l'IP
+            pass
     return get_remote_address(request)
 
 
@@ -49,7 +63,9 @@ limiter = Limiter(
     # slowapi bascule sur un compteur en mémoire (par worker) au lieu d'une 500.
     swallow_errors=True,
     in_memory_fallback_enabled=True,
-    # Pas de default_limits — on rate-limit explicitement endpoint par
-    # endpoint avec le décorateur. Évite des surprises sur les endpoints
-    # legitimes à fort trafic (WS, polling, etc.).
+    # Garde-fou global (120 req/min par IP) appliqué par SlowAPIMiddleware à
+    # toutes les routes HTTP : freine l'aspiration de données et le flood. Les
+    # routes à fort trafic légitime sont exemptées avec @limiter.exempt
+    # (webhook PSP, health checks). Les WebSockets ne sont pas concernés.
+    default_limits=["120/minute"],
 )

@@ -85,6 +85,10 @@ class Course(Base):
     # Traité à la main par l'admin tant que le PSP n'expose pas de refund par API.
     remboursement_du = Column(Float, nullable=True)
     rembourse_at = Column(DateTime(timezone=True), nullable=True)
+    # Anti-fraude : distance (km) entre la position du livreur quand il marque la
+    # course livrée et l'adresse déclarée du client. Élevée = fausse adresse
+    # (prix réduit) ou fausse livraison → revue admin.
+    ecart_livraison_km = Column(Float, nullable=True)
     geniuspay_reference = Column(String(100), nullable=True)
     geniuspay_checkout_url = Column(Text, nullable=True)
     

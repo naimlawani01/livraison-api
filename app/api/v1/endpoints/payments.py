@@ -23,6 +23,7 @@ from ....models.expediteur import Expediteur
 from ....models.credit_transaction import CreditTransaction
 from ....services import genius_pay_service, credit_service, paiement_service, soldes
 from ....services.genius_pay_service import GeniusPayError
+from ....core.rate_limit import limiter
 from ....utils.dependencies import get_current_expediteur
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ async def relancer_paiement(
 # ── 2. Webhook GeniusPay ──────────────────────────────────────────────────────
 
 @router.post("/webhooks/geniuspay", status_code=status.HTTP_200_OK)
+@limiter.exempt  # appels du PSP (rafales possibles) — protégé par signature HMAC
 async def webhook_geniuspay(
     request: Request,
     db: AsyncSession = Depends(get_db),

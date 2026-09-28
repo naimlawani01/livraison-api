@@ -84,7 +84,7 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
   | `/auth/request-otp` | 10/hour | + the custom `_check_otp_rate_limit` (3/5min by phone) |
   | `/auth/verify-otp` | 20/hour | + custom OTP rate limit |
   | `/loc/{token}/submit` | 20/min | public endpoint, anti flood |
-  | (everything else) | 120/min default | global guardrail |
+  | (everything else) | 120/min default | global guardrail — par utilisateur si JWT valide, sinon par IP (CGNAT) ; exemptés : webhook PSP, health |
 - **DB composite indexes**: hot query paths have composite indexes (see `app/models/course.py:__table_args__` and `wallet_transaction.py`). Migration `017_add_composite_indexes.py` applies them in prod. When adding a query that filters on multiple columns at once, check if an index covers it — otherwise add one (in the model + a migration).
 - **Health checks**: two endpoints — `GET /health` (liveness, ~ms, used by Railway/LB, always 200 when process responds) and `GET /health/deep` (readiness, ~50-200ms, used by external monitoring like UptimeRobot/BetterStack, returns 503 if any of DB/Redis/R2 is down). GeniusPay is intentionally NOT checked in deep health — its transient outages shouldn't flag Sönaiyaa as degraded.
 - **Redis cache patterns**:
@@ -107,6 +107,10 @@ Le modèle bascule de « wallet-dette livreur » vers **Crédit expéditeur + Ga
   - **Anti-fraude prix** : un expéditeur **vérifié** ne peut pas modifier seul `latitude`/`longitude`/`adresse` (le prix dépend de la distance) → passe par le support.
   - `LivreurUpdate` n'accepte plus les `*_url` de documents : ils ne changent que via `POST /livreurs/upload-document`.
   - **Code de livraison activé par défaut** (`exige_code_livraison=True`) et **envoyé au client dans son SMS** (jamais sur la page de suivi, masqué au livreur).
+  - **Double authentification admin** (`ADMIN_2FA_ENABLED`, défaut `True`) : `POST /auth/login` d'un ADMIN avec le bon mot de passe renvoie **401 `otp_required`** (+ en-tête `X-OTP-Required: true`) et envoie un code SMS ; il faut rappeler `/auth/login` avec `password` + `otp_code`. `/auth/verify-otp` est **refusé aux admins** (le code SMS seul ne suffit jamais). L'admin-web doit gérer ce 2e appel.
+  - **Squat de numéro / prise de contrôle préparée** : un compte **jamais vérifié** depuis plus de 15 min (`DELAI_SQUAT`) peut être remplacé par une nouvelle inscription ; à la **première** vérification OTP tardive, le mot de passe posé à l'inscription est **effacé** (il a pu être choisi par un tiers).
+  - **Rate-limit global** : `default_limits=["120/minute"]` via `SlowAPIMiddleware`, compté **par utilisateur** si le JWT est valide (sinon par IP) — en Guinée beaucoup d'abonnés partagent une IP (CGNAT). Exemptés : webhook PSP, `/health`, `/health/deep`.
+  - **Fraude à la livraison** : à `TERMINEE`, distance position livreur ↔ adresse déclarée du client stockée dans `courses.ecart_livraison_km` (migration `023`) ; au-delà de `SEUIL_ECART_LIVRAISON_KM` (1 km) → log WARNING + visible dans `GET /admin/courses/suspectes`. Non bloquant (GPS imprécis).
   - ⚠️ **À vérifier côté déploiement (Railway)** : `CORS_ORIGINS` = uniquement les domaines prod (pas de localhost), `CORS_ALLOW_ALL_ORIGINS=False`, `SECRET_KEY` long/aléatoire (pas la valeur d'`.env.example`).
   - **WebSocket auth** : le token passe par le **sous-protocole WS** (le client offre `["bearer", "<jwt>"]`, cf. `websocket_service.dart`) → hors de l'URL, donc hors des logs. Le **query param `?token=` reste accepté en repli legacy** pour les apps déjà déployées ; à retirer une fois toutes les versions migrées. Le WS vérifie aussi `type == "access"`.
 - **Résilience (défaillances courantes)** :

@@ -515,6 +515,37 @@ async def accepter_course(
     return course
 
 
+async def _controler_position_livraison(course: Course, livreur: Livreur) -> None:
+    """Anti-fraude : où est le livreur quand il marque la course livrée ?
+
+    Un écart important avec l'adresse déclarée du client trahit une fausse
+    adresse (déclarée près du retrait pour payer moins) ou une fausse livraison.
+    On ne bloque pas (le GPS peut être imprécis) : on enregistre l'écart et on
+    alerte au-delà de SEUIL_ECART_LIVRAISON_KM → revue admin.
+    """
+    if course.latitude_client is None or course.longitude_client is None:
+        return
+    position = None
+    try:
+        from ....core.redis import redis_client
+        pos = await redis_client.geopos("livreurs_locations", str(livreur.id))
+        if pos and pos[0]:
+            position = (float(pos[0][1]), float(pos[0][0]))  # (lat, lon)
+    except Exception:  # noqa: BLE001 — Redis indispo : position enregistrée en base
+        pass
+    if position is None and livreur.latitude is not None and livreur.longitude is not None:
+        position = (livreur.latitude, livreur.longitude)
+    if position is None:
+        return
+    ecart = GeolocationService.calculer_distance(position, (course.latitude_client, course.longitude_client))
+    course.ecart_livraison_km = round(ecart, 2)
+    if ecart > settings.SEUIL_ECART_LIVRAISON_KM:
+        logger.warning(
+            "Livraison loin de l'adresse déclarée — revue admin",
+            extra={"course_id": str(course.id), "ecart_km": round(ecart, 2)},
+        )
+
+
 @router.patch("/{course_id}/statut", response_model=CourseResponse)
 async def update_course_status(
     course_id: str,
@@ -582,6 +613,7 @@ async def update_course_status(
             .with_for_update().execution_options(populate_existing=True)
         )).scalar_one()
         livreur.nombre_courses_completees += 1
+        await _controler_position_livraison(course, livreur)
         livreur.total_gains += course.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
         if course.mode_paiement == ModePaiement.MOBILE_MONEY and course.paiement_confirme != "oui":

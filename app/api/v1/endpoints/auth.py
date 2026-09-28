@@ -15,7 +15,8 @@ from ....core.security import (
     decode_token,
 )
 from ....core.rate_limit import limiter
-from ....models.user import User
+from ....models.user import User, UserRole
+from ....core.config import settings
 from ....models.livreur import Livreur
 from ....schemas.user import (
     UserCreate,
@@ -35,6 +36,9 @@ _bearer_scheme = HTTPBearer()
 router = APIRouter()
 
 OTP_RATE_LIMIT = 3   # tentatives max
+# Compte jamais vérifié au-delà de ce délai = potentiellement créé par un tiers
+# avec le numéro de quelqu'un d'autre (squat / prise de contrôle préparée).
+DELAI_SQUAT = timedelta(minutes=15)
 OTP_RATE_WINDOW = 300  # 5 minutes
 
 
@@ -70,12 +74,28 @@ async def register(
     result = await db.execute(query)
     existing_user = result.scalar_one_or_none()
     
-    if existing_user:
+    # SÉCURITÉ (squat de numéro) : un compte jamais vérifié par SMS depuis plus de
+    # DELAI_SQUAT peut avoir été créé par quelqu'un d'autre avec ce numéro → on le
+    # remplace plutôt que de bloquer le vrai propriétaire.
+    if existing_user and (
+        existing_user.is_verified
+        or existing_user.created_at > datetime.now(timezone.utc) - DELAI_SQUAT
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ce numéro de téléphone est déjà enregistré"
         )
-    
+    if existing_user:
+        try:
+            await db.delete(existing_user)
+            await db.flush()
+        except Exception:  # noqa: BLE001 — données liées : on ne supprime pas à l'aveugle
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ce numéro de téléphone est déjà enregistré. Contactez le support.",
+            )
+
     # Créer l'utilisateur
     user = User(
         phone=user_data.phone,
@@ -160,6 +180,14 @@ async def verify_otp(
             detail="Utilisateur non trouvé"
         )
 
+    # SÉCURITÉ : un admin ne se connecte jamais avec le seul code SMS (vol de
+    # SIM) — il passe par /auth/login (mot de passe + code).
+    if user.role == UserRole.ADMIN and settings.ADMIN_2FA_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Connexion administrateur : utilisez le mot de passe + code SMS",
+        )
+
     if not user.otp_code or not hmac.compare_digest(user.otp_code, otp_verify.otp_code):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -172,6 +200,13 @@ async def verify_otp(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Code OTP expiré"
         )
+
+    # SÉCURITÉ (prise de contrôle préparée) : un attaquant peut créer un compte
+    # avec le numéro d'une victime et y poser SON mot de passe ; si la victime
+    # valide le compte plus tard par SMS, l'attaquant se connecterait avec ce mot
+    # de passe. Première vérification tardive → le mot de passe inconnu est effacé.
+    if not user.is_verified and user.created_at < datetime.now(timezone.utc) - DELAI_SQUAT:
+        user.password_hash = None
     
     # Marquer comme vérifié
     user.is_verified = True
@@ -230,6 +265,33 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Compte non vérifié. Veuillez vérifier votre code OTP"
         )
+
+    # SÉCURITÉ — double authentification admin : mot de passe correct → on envoie
+    # un code SMS ; il faut rappeler /login avec password + otp_code.
+    if user.role == UserRole.ADMIN and settings.ADMIN_2FA_ENABLED:
+        await _check_otp_rate_limit(user.phone)
+        if not login_data.otp_code:
+            user.otp_code = generate_otp()
+            user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+            await db.commit()
+            await sms_service.envoyer_otp(user.phone, user.otp_code)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="otp_required",
+                headers={"X-OTP-Required": "true"},
+            )
+        if (
+            not user.otp_code
+            or not user.otp_expires_at
+            or user.otp_expires_at < datetime.now(timezone.utc)
+            or not hmac.compare_digest(user.otp_code, login_data.otp_code)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Code de vérification invalide ou expiré",
+            )
+        user.otp_code = None
+        user.otp_expires_at = None
     
     # Mettre à jour la dernière connexion
     user.last_login = datetime.now(timezone.utc)
