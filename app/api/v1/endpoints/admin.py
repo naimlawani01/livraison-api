@@ -1061,3 +1061,50 @@ async def get_expediteur_credit(
             for t in txns
         ],
     }
+
+
+# ── Remboursements clients (Mobile Money payé puis course annulée) ────────────
+
+@router.get("/remboursements")
+async def lister_remboursements(
+    inclure_traites: bool = False,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Paiements clients à rembourser à la main (tant que le PSP n'expose pas de
+    remboursement par API)."""
+    q = select(Course).where(Course.remboursement_du.is_not(None))
+    if not inclure_traites:
+        q = q.where(Course.rembourse_at.is_(None))
+    courses = (await db.execute(q.order_by(Course.annulee_at.desc()))).scalars().all()
+    return [
+        {
+            "course_id": str(c.id),
+            "numero_course": c.numero_course,
+            "montant": c.remboursement_du,
+            "client_nom": c.contact_client_nom,
+            "client_telephone": c.contact_client_telephone,
+            "geniuspay_reference": c.geniuspay_reference,
+            "annulee_at": c.annulee_at.isoformat() if c.annulee_at else None,
+            "raison_annulation": c.raison_annulation,
+            "rembourse_at": c.rembourse_at.isoformat() if c.rembourse_at else None,
+        }
+        for c in courses
+    ]
+
+
+@router.post("/remboursements/{course_id}/effectue")
+async def marquer_rembourse(
+    course_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Marquer un remboursement client comme effectué (fait hors plateforme)."""
+    c = (await db.execute(select(Course).where(Course.id == course_id))).scalar_one_or_none()
+    if not c or c.remboursement_du is None:
+        raise HTTPException(status_code=404, detail="Aucun remboursement dû pour cette course")
+    if c.rembourse_at is not None:
+        raise HTTPException(status_code=400, detail="Remboursement déjà marqué comme effectué")
+    c.rembourse_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"message": "Remboursement marqué comme effectué", "montant": c.remboursement_du}

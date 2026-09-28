@@ -185,6 +185,69 @@ async def rembourser_commission(
     return txn
 
 
+async def completer_commission(db: AsyncSession, course) -> None:
+    """Aligne la commission réservée sur la commission actuelle de la course
+    (après recalcul du prix au partage GPS). **Strict** : si le Crédit ne couvre
+    pas le complément, lève ``SoldeInsuffisant`` et rien n'est débité — la course
+    ne doit alors pas partir (sinon Sönaiyaa perdrait la différence).
+    """
+    p = await _lock_expediteur(db, course.expediteur_id)
+    manque = round((course.commission_plateforme or 0) - await commission_reservee(db, course.id), 2)
+    if manque == 0:
+        await db.commit()  # libère le verrou
+        return
+
+    avant = p.credit_solde or 0.0
+    if manque > 0:
+        apres = soldes.credit_debiter(avant, manque)  # lève si insuffisant
+        type_, montant, description = "commission", manque, "Complément commission (recalcul prix)"
+    else:
+        montant = -manque
+        apres = soldes.gains_crediter(avant, montant)
+        type_, description = "remboursement", "Ajustement commission (recalcul prix)"
+
+    p.credit_solde = apres
+    db.add(CreditTransaction(
+        expediteur_id=p.id, type=type_, montant=montant,
+        solde_avant=avant, solde_apres=apres,
+        course_id=course.id, description=description, statut="complete",
+    ))
+    await db.commit()
+
+
+async def crediter_avoir(
+    db: AsyncSession,
+    expediteur_id,
+    montant: float,
+    *,
+    course_id=None,
+    description: Optional[str] = None,
+) -> Optional[CreditTransaction]:
+    """Crédite un avoir (paiement Mobile Money de l'expéditeur sur une course
+    annulée). Idempotent par course : un seul avoir par course."""
+    p = await _lock_expediteur(db, expediteur_id)
+    if course_id is not None:
+        deja = await db.execute(select(CreditTransaction.id).where(
+            CreditTransaction.course_id == course_id,
+            CreditTransaction.type == "avoir",
+        ).limit(1))
+        if deja.first() is not None:
+            await db.commit()
+            return None
+    avant = p.credit_solde or 0.0
+    apres = soldes.gains_crediter(avant, montant)
+    p.credit_solde = apres
+    txn = CreditTransaction(
+        expediteur_id=p.id, type="avoir", montant=montant,
+        solde_avant=avant, solde_apres=apres,
+        course_id=course_id, description=description, statut="complete",
+    )
+    db.add(txn)
+    await db.commit()
+    await db.refresh(txn)
+    return txn
+
+
 async def ajuster_commission(
     db: AsyncSession,
     expediteur_id,

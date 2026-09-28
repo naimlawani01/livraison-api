@@ -19,12 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
-from ....models.course import Course, CourseStatus, ModePaiement
+from ....models.course import Course, CourseStatus, ModePaiement, Payeur
 from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
 from ....models.wallet_transaction import WalletTransaction
 from ....models.credit_transaction import CreditTransaction
-from ....services import genius_pay_service, credit_service
+from ....services import genius_pay_service, credit_service, remboursement_service, soldes
 from ....services.genius_pay_service import GeniusPayError
 from ....services.matching_service import MatchingService
 from ....utils.dependencies import get_current_expediteur
@@ -59,6 +59,17 @@ async def relancer_paiement(
         raise HTTPException(status_code=400, detail="Paiement déjà confirmé")
     if course.status not in (CourseStatus.CREEE,):
         raise HTTPException(status_code=400, detail=f"Impossible de relancer — statut: {course.status}")
+
+    # Expéditeur payeur : la commission doit être entièrement couverte avant de
+    # générer le lien (sinon Sönaiyaa perdrait le complément après recalcul GPS).
+    if course.payeur == Payeur.EXPEDITEUR.value and await credit_service.commission_reservee(db, course.id) > 0:
+        try:
+            await credit_service.completer_commission(db, course)
+        except soldes.SoldeInsuffisant:
+            raise HTTPException(
+                status_code=400,
+                detail="Crédit insuffisant pour couvrir la commission. Rechargez votre Crédit.",
+            )
 
     # Idempotency : verrou Redis 60s pour éviter de générer plusieurs
     # références GeniusPay sur un double-clic ou un retry réseau. Si le
@@ -202,6 +213,16 @@ async def webhook_geniuspay(
 
         if course.paiement_confirme == "oui":
             logger.info("payment.success — course %s déjà confirmée, skip", course_id)
+            return {"ok": True}
+
+        # Paiement arrivé après annulation : rien à diffuser, on trace le
+        # remboursement (avoir expéditeur ou remboursement client).
+        if course.status == CourseStatus.ANNULEE:
+            course.paiement_confirme = "oui"
+            course.geniuspay_reference = data.get("reference", course.geniuspay_reference)
+            await db.commit()
+            await remboursement_service.enregistrer_remboursement(db, course)
+            logger.warning("payment.success — course %s déjà annulée, remboursement tracé", course_id)
             return {"ok": True}
 
         # Confirmer le paiement

@@ -130,7 +130,8 @@ def _course_payload(course_id, reference):
     }
 
 
-class TestWebhookPaiementCourse:
+class _CourseMobileMoney:
+    """Stubs SMS/diffusion + création d'une course Mobile Money (pas de tests ici)."""
     @pytest.fixture(autouse=True)
     def _stubs(self, monkeypatch):
         from app.services import sms_service as sms_mod
@@ -154,6 +155,8 @@ class TestWebhookPaiementCourse:
         cmd = await create_course(payload, p, session)
         return user, p, cmd
 
+
+class TestWebhookPaiementCourse(_CourseMobileMoney):
     async def test_paiement_client_rend_la_commission(self, session):
         from app.api.v1.endpoints.payments import webhook_geniuspay
         from app.models.course import Payeur
@@ -185,3 +188,80 @@ class TestWebhookPaiementCourse:
         await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-3")), session)
         assert await credit_service.credit_disponible(session, p.id) == 48_800
 
+
+
+# ── Garde-fous : annulation, remboursements, commission non couverte ─────────
+
+class TestCoherencePaiement(_CourseMobileMoney):
+    async def test_annulation_bloquee_colis_en_main(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.models.course import CourseStatus, Payeur
+        from app.models.user import User, UserRole
+        from app.schemas.course import CourseAnnulation
+        user, p, cmd = await self._creer_course(session, Payeur.EXPEDITEUR)
+        cmd.status = CourseStatus.EN_LIVRAISON
+        await session.commit()
+        with pytest.raises(HTTPException) as exc:
+            await annuler_course(cmd.id, CourseAnnulation(raison="test"), user, session)
+        assert exc.value.status_code == 400
+        # l'admin peut toujours trancher
+        admin = User(id=uuid.uuid4(), phone="+224600999999", role=UserRole.ADMIN, is_verified=True)
+        session.add(admin)
+        await session.commit()
+        await annuler_course(cmd.id, CourseAnnulation(raison="litige"), admin, session)
+        assert cmd.status == CourseStatus.ANNULEE
+
+    async def test_paiement_client_apres_annulation_trace_le_remboursement(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.api.v1.endpoints.payments import webhook_geniuspay
+        from app.models.course import Payeur
+        from app.schemas.course import CourseAnnulation
+        user, p, cmd = await self._creer_course(session, Payeur.CLIENT)
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user, session)
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-4")), session)
+        await session.refresh(cmd)
+        assert cmd.remboursement_du == cmd.prix_propose   # à rembourser au client
+        assert cmd.status.value == "ANNULEE"              # jamais rediffusée
+
+    async def test_expediteur_paye_puis_annule_recoit_un_avoir(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.api.v1.endpoints.payments import webhook_geniuspay
+        from app.models.course import Payeur
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        user, p, cmd = await self._creer_course(session, Payeur.EXPEDITEUR)
+        await webhook_geniuspay(_make_request(_course_payload(cmd.id, "PAY-5")), session)
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user, session)
+        # commission rendue (1 200) + avoir de ce qu'il a payé (8 800)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000 + 8_800
+        await session.refresh(cmd)
+        assert cmd.remboursement_du is None
+
+    async def test_commission_non_couverte_bloque_la_diffusion(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import rediffuser_course
+        from app.models.course import CourseStatus, ModePaiement
+        from app.services import credit_service, pricing
+        from app.schemas.course import CourseCreate
+        from app.api.v1.endpoints.courses import create_course
+        _, p = await _creer_expediteur(session, credit=1_200)   # juste le plancher
+        cmd = await create_course(CourseCreate(
+            contact_client_nom="Client", contact_client_telephone="620000000",
+            prix_propose=1, mode_paiement=ModePaiement.CASH, exige_code_livraison=False,
+        ), p, session)
+        # le client partage sa position : prix recalculé à 5 km
+        tarif = pricing.calculer_tarif(5)
+        cmd.prix_propose, cmd.commission_plateforme, cmd.montant_livreur = tarif.prix, tarif.commission, tarif.gain_livreur
+        cmd.latitude_client, cmd.longitude_client = 9.55, -13.65
+        await session.commit()
+        with pytest.raises(HTTPException) as exc:
+            await rediffuser_course(cmd.id, p, session)
+        assert exc.value.status_code == 400
+        assert cmd.status == CourseStatus.CREEE
+        assert await credit_service.credit_disponible(session, p.id) == 0   # rien débité en plus
+        # après recharge : le complément est pris et la course part
+        p.credit_solde = 10_000
+        await session.commit()
+        await rediffuser_course(cmd.id, p, session)
+        assert await credit_service.credit_disponible(session, p.id) == 10_000 - (tarif.commission - 1_200)
