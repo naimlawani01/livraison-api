@@ -11,7 +11,6 @@ POST /payments/webhooks/geniuspay
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -20,13 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
 from ....models.course import Course, CourseStatus, ModePaiement, Payeur
-from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
-from ....models.wallet_transaction import WalletTransaction
 from ....models.credit_transaction import CreditTransaction
-from ....services import genius_pay_service, credit_service, remboursement_service, soldes
+from ....services import genius_pay_service, credit_service, paiement_service, soldes
 from ....services.genius_pay_service import GeniusPayError
-from ....services.matching_service import MatchingService
 from ....utils.dependencies import get_current_expediteur
 
 logger = logging.getLogger(__name__)
@@ -77,7 +73,10 @@ async def relancer_paiement(
     # le lien existant sans rappeler GeniusPay.
     from ....core.redis import redis_client
     lock_key = f"relancer_lock:{course_id}"
-    lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=60)
+    try:
+        lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=60)
+    except Exception:  # noqa: BLE001 — Redis en panne : on relance sans verrou
+        lock_acquired = True
 
     if not lock_acquired and course.geniuspay_reference and course.geniuspay_checkout_url:
         # Double-clic / retry — retourne le lien existant tel quel.
@@ -97,7 +96,10 @@ async def relancer_paiement(
         )
     except GeniusPayError as e:
         # Libère le verrou si GeniusPay rejette, sinon on resterait bloqué 60s
-        await redis_client.delete(lock_key)
+        try:
+            await redis_client.delete(lock_key)
+        except Exception:  # noqa: BLE001
+            pass
         raise HTTPException(status_code=502, detail=str(e))
 
     course.geniuspay_reference = paiement.get("reference")
@@ -211,50 +213,8 @@ async def webhook_geniuspay(
             logger.error("payment.success — course %s introuvable", course_id)
             return {"ok": False, "reason": "course_not_found"}
 
-        if course.paiement_confirme == "oui":
-            logger.info("payment.success — course %s déjà confirmée, skip", course_id)
-            return {"ok": True}
-
-        # Paiement arrivé après annulation : rien à diffuser, on trace le
-        # remboursement (avoir expéditeur ou remboursement client).
-        if course.status == CourseStatus.ANNULEE:
-            course.paiement_confirme = "oui"
-            course.geniuspay_reference = data.get("reference", course.geniuspay_reference)
-            await db.commit()
-            await remboursement_service.enregistrer_remboursement(db, course)
-            logger.warning("payment.success — course %s déjà annulée, remboursement tracé", course_id)
-            return {"ok": True}
-
-        # Confirmer le paiement
-        course.paiement_confirme = "oui"
-        course.geniuspay_reference = data.get("reference", course.geniuspay_reference)
-        await db.commit()
-
-        # Le client a payé le prix complet (commission incluse) → la commission
-        # réservée en garantie sur le Crédit de l'expéditeur lui est rendue.
-        if course.payeur == "client":
-            try:
-                await credit_service.restituer_commission(
-                    db, course.expediteur_id, course.id,
-                    description=f"Commission couverte par le client — course #{course.numero_course}",
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.error("payment.success — restitution Crédit échouée (course %s): %s", course_id, e)
-
-        # Récupérer le expediteur pour avoir ses coordonnées
-        q_p = select(Expediteur).where(Expediteur.id == course.expediteur_id)
-        r_p = await db.execute(q_p)
-        expediteur: Optional[Expediteur] = r_p.scalar_one_or_none()
-
-        if expediteur:
-            await MatchingService.diffuser_course(
-                db, course, expediteur.latitude, expediteur.longitude,
-                expediteur_nom=expediteur.nom,
-            )
-        else:
-            logger.error("payment.success — expediteur introuvable pour course %s", course_id)
-
-        logger.info("payment.success — course %s confirmée et diffusée", course.numero_course)
+        await paiement_service.confirmer_paiement_course(db, course, data.get("reference"))
+        logger.info("payment.success — course %s traitée", course.numero_course)
         return {"ok": True}
 
     # ── payment.failed ───────────────────────────────────────────────────────
@@ -268,62 +228,29 @@ async def webhook_geniuspay(
         course_id = metadata.get("course_id")
         logger.warning("payment.expired — course_id=%s", course_id)
         if course_id:
-            q = select(Course).where(Course.id == course_id)
-            r = await db.execute(q)
-            course: Optional[Course] = r.scalar_one_or_none()
-            if course and course.status == CourseStatus.CREEE and course.paiement_confirme == "non":
-                course.status = CourseStatus.ANNULEE
-                course.annulee_at = datetime.now(timezone.utc)
-                course.raison_annulation = "Lien de paiement expiré"
-                await db.commit()
-                logger.info("payment.expired — course %s annulée", course_id)
+            try:
+                course_uuid = uuid.UUID(str(course_id))
+            except ValueError:
+                return {"ok": False, "reason": "bad_course_id"}
+            course = (await db.execute(select(Course).where(Course.id == course_uuid))).scalar_one_or_none()
+            if course and course.paiement_confirme == "non":
+                # Annulation + commission rendue (avant : commission perdue).
+                if await paiement_service.annuler_course_systeme(
+                    db, course.id, "Lien de paiement expiré", statuts=(CourseStatus.CREEE,),
+                ):
+                    logger.info("payment.expired — course %s annulée", course_id)
         return {"ok": True}
 
     # ── cashout.completed ────────────────────────────────────────────────────
-    elif event == "cashout.completed":
-        livreur_id = metadata.get("livreur_id")
+    elif event in ("cashout.completed", "cashout.failed"):
         reference = data.get("reference")
         if not reference:
             return {"ok": False, "reason": "missing_reference"}
-
-        q = select(WalletTransaction).where(
-            WalletTransaction.geniuspay_reference == reference
-        )
-        r = await db.execute(q)
-        txn: Optional[WalletTransaction] = r.scalar_one_or_none()
-
-        if txn:
-            txn.statut = "complete"
-            await db.commit()
-            logger.info("cashout.completed — transaction %s marquée complete", reference)
-        else:
-            logger.warning("cashout.completed — transaction avec ref %s introuvable", reference)
-
-        return {"ok": True}
-
-    # ── cashout.failed ───────────────────────────────────────────────────────
-    elif event == "cashout.failed":
-        reference = data.get("reference")
-        logger.error("cashout.failed — ref=%s livreur=%s", reference, metadata.get("livreur_id"))
-
-        if reference:
-            q = select(WalletTransaction).where(
-                WalletTransaction.geniuspay_reference == reference
-            )
-            r = await db.execute(q)
-            txn: Optional[WalletTransaction] = r.scalar_one_or_none()
-
-            if txn and txn.statut == "en_cours":
-                # Rembourser le solde livreur
-                q_l = select(Livreur).where(Livreur.id == txn.livreur_id)
-                r_l = await db.execute(q_l)
-                livreur: Optional[Livreur] = r_l.scalar_one_or_none()
-                if livreur:
-                    livreur.solde_disponible += txn.montant
-                txn.statut = "refuse"
-                await db.commit()
-                logger.info("cashout.failed — solde livreur remboursé de %s GNF", txn.montant)
-
+        succes = event == "cashout.completed"
+        if not succes:
+            logger.error("cashout.failed — ref=%s livreur=%s", reference, metadata.get("livreur_id"))
+        if not await paiement_service.finaliser_retrait(db, reference, succes):
+            logger.warning("%s — transaction %s introuvable ou déjà traitée", event, reference)
         return {"ok": True}
 
     else:

@@ -45,6 +45,10 @@ limiter = Limiter(
     # endpoints async retournant un modèle Pydantic (Response pas encore
     # construite au moment de l'injection). Bug connu de slowapi 0.1.x.
     headers_enabled=False,
+    # Redis en panne → on ne fait pas planter login / OTP / partage de position :
+    # slowapi bascule sur un compteur en mémoire (par worker) au lieu d'une 500.
+    swallow_errors=True,
+    in_memory_fallback_enabled=True,
     # Pas de default_limits — on rate-limit explicitement endpoint par
     # endpoint avec le décorateur. Évite des surprises sur les endpoints
     # legitimes à fort trafic (WS, polling, etc.).

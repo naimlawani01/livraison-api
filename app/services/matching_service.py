@@ -1,4 +1,5 @@
 from typing import List, Optional
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 import json
@@ -128,15 +129,30 @@ class MatchingService:
         
         # Note: la vérification du nombre max de courses est faite dans l'endpoint
         
-        # Assigner la course
-        course.livreur_id = livreur.id
-        course.status = CourseStatus.ACCEPTEE
-        course.acceptee_at = datetime.now(timezone.utc)
-        
+        # Assigner la course — UPDATE conditionnel ATOMIQUE : si deux livreurs
+        # acceptent à la même seconde, un seul voit rowcount == 1, l'autre perd.
+        # (Avant : lecture puis écriture → les deux « gagnaient ».)
+        numero = course.numero_course  # lu avant un éventuel rollback (qui expire l'objet)
+        res = await db.execute(
+            update(Course)
+            .where(Course.id == course.id, Course.status == CourseStatus.DIFFUSEE)
+            .values(
+                livreur_id=livreur.id,
+                status=CourseStatus.ACCEPTEE,
+                acceptee_at=datetime.now(timezone.utc),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if res.rowcount != 1:
+            await db.rollback()
+            logger.warning(f"Course {numero} prise par un autre livreur entre-temps")
+            return False
+
         # Marquer le livreur comme en course
         livreur.is_en_course = True
-        
+
         await db.commit()
+        await db.refresh(course)
         
         # Notifier le expediteur
         # Note: Implémenter la récupération du device_token du expediteur

@@ -490,7 +490,7 @@ async def accepter_course(
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Impossible d'accepter cette course"
+            detail="Cette course vient d'être prise par un autre livreur"
         )
     
     await db.refresh(course)
@@ -523,10 +523,13 @@ async def update_course_status(
     db: AsyncSession = Depends(get_db)
 ):
     """Mettre à jour le statut d'une course (livreur) — transitions validées"""
+    # Verrou sur la course : sur réseau faible l'app renvoie souvent la même
+    # requête ; sans verrou, deux « TERMINEE » simultanés créditeraient les Gains
+    # deux fois. La 2e attend, relit TERMINEE et est refusée par la transition.
     query = select(Course).where(
         Course.id == course_id,
         Course.livreur_id == livreur.id
-    )
+    ).with_for_update().execution_options(populate_existing=True)
     result = await db.execute(query)
     course = result.scalar_one_or_none()
     
@@ -556,23 +559,27 @@ async def update_course_status(
             # Anti brute-force : le code n'a que 4 chiffres. On limite à 5 essais
             # par 15 min et par course, sinon un livreur malhonnête pourrait le
             # deviner et confirmer une livraison non remise.
-            from ....core.redis import redis_client
+            from ....core import compteur
             _attempts_key = f"code_attempts:{course.id}"
-            _attempts = int(await redis_client.get(_attempts_key) or 0)
+            _attempts = await compteur.lire(_attempts_key)
             if _attempts >= 5:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Trop de tentatives de code. Réessayez dans 15 minutes.",
                 )
             if not code_livraison or code_livraison != course.code_livraison:
-                await redis_client.incr(_attempts_key)
-                await redis_client.expire(_attempts_key, 900)
+                await compteur.incrementer(_attempts_key, 900)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Code de livraison invalide ou manquant"
                 )
-            await redis_client.delete(_attempts_key)  # succès → reset
+            await compteur.effacer(_attempts_key)  # succès → reset
         course.livree_at = datetime.now(timezone.utc)
+        # Verrou sur la ligne livreur avant toute écriture de solde (règle CLAUDE.md).
+        livreur = (await db.execute(
+            select(Livreur).where(Livreur.id == livreur.id)
+            .with_for_update().execution_options(populate_existing=True)
+        )).scalar_one()
         livreur.nombre_courses_completees += 1
         livreur.total_gains += course.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
