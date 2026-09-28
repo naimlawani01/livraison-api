@@ -49,7 +49,10 @@ class SMSService:
     async def _send(self, telephone: str, message: str) -> bool:
         """Envoi brut. Retourne True si succès."""
         if not self._configured:
-            logger.info("[DEV MODE] SMS pour %s: %s", telephone, message)
+            # Codes (OTP, livraison) masqués : les logs sont lisibles par plus de
+            # monde que le destinataire du SMS.
+            import re
+            logger.info("[DEV MODE] SMS pour %s: %s", telephone, re.sub(r"\b\d{4,6}\b", "****", message))
             return True
 
         contact = _to_passeinfo_format(telephone)

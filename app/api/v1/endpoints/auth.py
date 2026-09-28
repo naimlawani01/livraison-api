@@ -144,11 +144,10 @@ async def request_otp(
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
+    # SÉCURITÉ (énumération) : même réponse que le numéro existe ou non, sinon un
+    # attaquant teste une liste de numéros pour savoir qui est client/livreur.
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Utilisateur non trouvé"
-        )
+        return {"message": "Si ce numéro est enregistré, un code a été envoyé"}
 
     otp_code = generate_otp()
     user.otp_code = otp_code
@@ -157,7 +156,7 @@ async def request_otp(
     await db.commit()
     await sms_service.envoyer_otp(user.phone, otp_code)
 
-    return {"message": "Code OTP envoyé"}
+    return {"message": "Si ce numéro est enregistré, un code a été envoyé"}
 
 
 @router.post("/verify-otp", response_model=TokenResponse)
@@ -174,10 +173,10 @@ async def verify_otp(
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
-    if not user:
+    if not user:  # même réponse qu'un mauvais code (pas d'énumération)
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Utilisateur non trouvé"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Code OTP invalide"
         )
 
     # SÉCURITÉ : un admin ne se connecte jamais avec le seul code SMS (vol de
