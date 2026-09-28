@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     
     # Courses
     MAX_COURSES_SIMULTANEES: int = 2  # Nombre max de courses en parallèle par livreur
+    # Une course non acceptée (ou non payée) passé ce délai est annulée
+    # automatiquement et la commission rendue (services/expiration_service.py).
+    COURSE_EXPIRATION_MINUTES: int = 120
+    # Indemnité versée au livreur quand l'expéditeur annule alors que le livreur
+    # est déjà en route (ACCEPTEE / EN_RECUPERATION). Prise sur le Crédit de
+    # l'expéditeur, plafonnée à son solde (jamais négatif).
+    INDEMNITE_ANNULATION_LIVREUR: int = 3_000
     
     # Commission — nouveau modèle : 12 %. Source de vérité canonique dans
     # app/services/pricing.py (TAUX_COMMISSION). Ce paramètre reste pour le code

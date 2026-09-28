@@ -5,7 +5,8 @@ l'expéditeur → quartier de destination).
 
 Modèle « l'expéditeur cherche un livreur » — identique en cash et Mobile Money :
 
-    prix         = arrondi(PRIX_BASE + PRIX_KM × distance_km) × mult_colis
+    distance_route = distance_km × COEF_ROUTE   (vol d'oiseau → trajet réel estimé)
+    prix         = arrondi(PRIX_BASE + PRIX_KM × distance_route) × mult_colis
     commission   = prix × TAUX_COMMISSION      (part Sönaiyaa, supportée par le livreur)
     gain_livreur = prix − commission           (ce que touche le livreur)
 
@@ -33,6 +34,9 @@ from typing import Optional
 # ── Paramètres du modèle tarifaire ───────────────────────────────────────────
 PRIX_BASE: int = 10_000        # GNF — plancher garanti pour toute course
 PRIX_KM: int = 1_500           # GNF ajoutés par kilomètre de distance
+# La distance mesurée (haversine) est à vol d'oiseau ; le trajet réel à Conakry
+# est plus long (rues, détours). On facture donc la distance estimée par la route.
+COEF_ROUTE: float = 1.3
 ARRONDI: int = 500             # le prix est arrondi au multiple de 500 GNF le plus proche
 TAUX_COMMISSION: float = 0.12  # 12 % — part plateforme prélevée sur le prix
 
@@ -55,7 +59,8 @@ class Tarif:
     prix: int             # coût total de la course (payé par l'expéditeur ou son client)
     commission: int       # part Sönaiyaa, garantie par le Crédit de l'expéditeur
     gain_livreur: int     # part livreur (cash de l'expéditeur, ou crédité sur ses Gains)
-    distance_km: float
+    distance_km: float    # vol d'oiseau (mesurée)
+    distance_route_km: float  # estimée par la route, celle qui est facturée
     type_colis: str
     mult_colis: float
 
@@ -81,7 +86,7 @@ def calculer_tarif(distance_km: float, type_colis: str = "standard") -> Tarif:
         raise ValueError("distance_km doit être >= 0")
 
     mult = multiplicateur_colis(type_colis)
-    brut = (PRIX_BASE + distance_km * PRIX_KM) * mult
+    brut = (PRIX_BASE + distance_km * COEF_ROUTE * PRIX_KM) * mult
     prix = max(PRIX_BASE, _arrondir(brut))
 
     commission = int(round(prix * TAUX_COMMISSION))
@@ -92,6 +97,7 @@ def calculer_tarif(distance_km: float, type_colis: str = "standard") -> Tarif:
         commission=commission,
         gain_livreur=gain_livreur,
         distance_km=round(distance_km, 2),
+        distance_route_km=round(distance_km * COEF_ROUTE, 2),
         type_colis=(type_colis or "standard").strip().lower(),
         mult_colis=mult,
     )

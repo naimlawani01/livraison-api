@@ -265,3 +265,99 @@ class TestCoherencePaiement(_CourseMobileMoney):
         await session.commit()
         await rediffuser_course(cmd.id, p, session)
         assert await credit_service.credit_disponible(session, p.id) == 10_000 - (tarif.commission - 1_200)
+
+
+# ── Expiration automatique & indemnité d'annulation ──────────────────────────
+
+class TestExpirationEtIndemnite(_CourseMobileMoney):
+    async def _course_cash(self, session, credit=50_000):
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement
+        from app.schemas.course import CourseCreate
+        user, p = await _creer_expediteur(session, credit=credit)
+        cmd = await create_course(CourseCreate(
+            contact_client_nom="Client", contact_client_telephone="620000000",
+            prix_propose=1, mode_paiement=ModePaiement.CASH, exige_code_livraison=False,
+        ), p, session)
+        return user, p, cmd
+
+    async def test_course_expiree_apres_2h_et_commission_rendue(self, session):
+        from datetime import datetime, timedelta, timezone
+        from app.models.course import CourseStatus
+        from app.services import credit_service
+        from app.services.expiration_service import expirer_courses
+        _, p, vieille = await self._course_cash(session)
+        _, p2, recente = await self._course_cash(session)
+        maintenant = datetime.now(timezone.utc)
+        vieille.created_at = maintenant - timedelta(hours=3)
+        await session.commit()
+        assert await expirer_courses(session, maintenant) == 1
+        await session.refresh(vieille)
+        await session.refresh(recente)
+        assert vieille.status == CourseStatus.ANNULEE
+        assert recente.status == CourseStatus.CREEE
+        assert await credit_service.credit_disponible(session, p.id) == 50_000   # commission rendue
+
+    async def test_course_acceptee_n_expire_pas(self, session):
+        from datetime import datetime, timedelta, timezone
+        from app.models.course import CourseStatus
+        from app.services.expiration_service import expirer_courses
+        _, p, cmd = await self._course_cash(session)
+        cmd.status = CourseStatus.ACCEPTEE
+        cmd.created_at = datetime.now(timezone.utc) - timedelta(hours=5)
+        await session.commit()
+        assert await expirer_courses(session) == 0
+
+    async def _livreur(self, session):
+        from app.models.livreur import Livreur
+        from app.models.user import User, UserRole
+        u = User(id=uuid.uuid4(), phone=f"+224601{uuid.uuid4().int % 1000000:06d}",
+                 role=UserRole.LIVREUR, is_verified=True)
+        session.add(u)
+        await session.flush()
+        liv = Livreur(id=uuid.uuid4(), user_id=u.id, nom_complet="Sow", is_verified=True,
+                      is_disponible=True, solde_disponible=0.0, total_gains=0.0)
+        session.add(liv)
+        await session.commit()
+        return u, liv
+
+    async def test_expediteur_annule_livreur_en_route_indemnise(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.models.course import CourseStatus
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        user, p, cmd = await self._course_cash(session)
+        _, liv = await self._livreur(session)
+        cmd.livreur_id, cmd.status = liv.id, CourseStatus.ACCEPTEE
+        await session.commit()
+        await annuler_course(cmd.id, CourseAnnulation(raison="plus besoin"), user, session)
+        await session.refresh(liv)
+        assert liv.solde_disponible == 3_000
+        # commission rendue (1 200) puis indemnité débitée (3 000)
+        assert await credit_service.credit_disponible(session, p.id) == 47_000
+
+    async def test_indemnite_plafonnee_au_credit(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.models.course import CourseStatus
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        user, p, cmd = await self._course_cash(session, credit=1_200)   # juste la commission
+        _, liv = await self._livreur(session)
+        cmd.livreur_id, cmd.status = liv.id, CourseStatus.EN_RECUPERATION
+        await session.commit()
+        await annuler_course(cmd.id, CourseAnnulation(raison="colis pas prêt"), user, session)
+        await session.refresh(liv)
+        assert liv.solde_disponible == 1_200     # ce qui restait sur le Crédit
+        assert await credit_service.credit_disponible(session, p.id) == 0
+
+    async def test_livreur_qui_annule_n_est_pas_indemnise(self, session):
+        from app.api.v1.endpoints.courses import annuler_course
+        from app.models.course import CourseStatus
+        from app.schemas.course import CourseAnnulation
+        _, p, cmd = await self._course_cash(session)
+        u_liv, liv = await self._livreur(session)
+        cmd.livreur_id, cmd.status = liv.id, CourseStatus.ACCEPTEE
+        await session.commit()
+        await annuler_course(cmd.id, CourseAnnulation(raison="panne"), u_liv, session)
+        await session.refresh(liv)
+        assert liv.solde_disponible == 0

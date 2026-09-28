@@ -248,6 +248,55 @@ async def crediter_avoir(
     return txn
 
 
+async def payer_indemnite_annulation(db: AsyncSession, course) -> float:
+    """Indemnise le livreur quand l'expéditeur annule une course déjà acceptée.
+
+    Montant : ``settings.INDEMNITE_ANNULATION_LIVREUR``, pris sur le Crédit de
+    l'expéditeur et **plafonné à son solde** (le Crédit ne passe jamais sous
+    zéro ; Sönaiyaa n'avance jamais l'argent). Le livreur reçoit exactement ce
+    qui est débité, sur ses Gains (verrou sur les deux lignes). Retourne le
+    montant versé (0 si rien).
+    """
+    from ..core.config import settings
+    from ..models.livreur import Livreur
+    from ..models.wallet_transaction import WalletTransaction
+
+    if not course.livreur_id or settings.INDEMNITE_ANNULATION_LIVREUR <= 0:
+        return 0.0
+    p = await _lock_expediteur(db, course.expediteur_id)
+    livreur = (await db.execute(
+        select(Livreur).where(Livreur.id == course.livreur_id).with_for_update()
+    )).scalar_one_or_none()
+    avant = p.credit_solde or 0.0
+    montant = round(min(float(settings.INDEMNITE_ANNULATION_LIVREUR), avant), 2)
+    if livreur is None or montant <= 0:
+        await db.commit()
+        return 0.0
+
+    p.credit_solde = soldes.credit_debiter(avant, montant)
+    db.add(CreditTransaction(
+        expediteur_id=p.id, type="indemnite", montant=montant,
+        solde_avant=avant, solde_apres=p.credit_solde, course_id=course.id,
+        description=f"Indemnité livreur — annulation course #{course.numero_course}",
+        statut="complete",
+    ))
+    gains_avant = livreur.solde_disponible or 0.0
+    livreur.solde_disponible = soldes.gains_crediter(gains_avant, montant)
+    db.add(WalletTransaction(
+        livreur_id=livreur.id, type="credit", montant=montant,
+        solde_avant=gains_avant, solde_apres=livreur.solde_disponible,
+        description=f"Indemnité d'annulation — course #{course.numero_course}",
+        course_id=course.id, statut="complete",
+    ))
+    await db.commit()
+    if montant < settings.INDEMNITE_ANNULATION_LIVREUR:
+        logger.warning(
+            "Indemnité d'annulation plafonnée au Crédit de l'expéditeur",
+            extra={"course_id": str(course.id), "montant": montant},
+        )
+    return montant
+
+
 async def ajuster_commission(
     db: AsyncSession,
     expediteur_id,
