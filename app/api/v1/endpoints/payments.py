@@ -25,6 +25,7 @@ from ....models.credit_transaction import CreditTransaction
 from ....services import genius_pay_service, credit_service, paiement_service, soldes
 from ....services.genius_pay_service import GeniusPayError
 from ....core.rate_limit import limiter
+from ....core.client_ip import ip_client
 from ....utils.dependencies import get_current_expediteur
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,7 @@ async def webhook_geniuspay(
 
     # Vérification de la signature (rejet silencieux = 200 pour éviter le retry inutile)
     if not genius_pay_service.verify_webhook_signature(payload_bytes, signature, timestamp):
-        logger.warning("Webhook GeniusPay — signature invalide (ip=%s)", request.client.host if request.client else "?")
+        logger.warning("Webhook GeniusPay — signature invalide (ip=%s)", ip_client(request))
         # On retourne 200 pour ne pas déclencher les retries GeniusPay,
         # mais on n'effectue aucune action.
         return {"ok": False, "reason": "invalid_signature"}

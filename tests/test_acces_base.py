@@ -55,3 +55,40 @@ def test_docker_compose_n_expose_rien_au_reseau():
     compose = open("docker-compose.yml", encoding="utf-8").read()
     for port in ("5432", "6379", "8000"):
         assert f'"127.0.0.1:{port}:{port}"' in compose
+
+
+# ── IP client non falsifiable (X-Forwarded-For) ───────────────────────────────
+
+def _req_xff(xff, client="10.1.2.3"):
+    from starlette.requests import Request
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    headers = [(b"x-forwarded-for", xff.encode())] if xff is not None else []
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": headers,
+                    "query_string": b"", "client": (client, 1234)}, receive)
+
+
+@pytest.mark.parametrize("xff, attendu", [
+    ("41.223.50.7", "41.223.50.7"),                           # client réel, 1 proxy
+    ("1.2.3.4, 41.223.50.7", "41.223.50.7"),                  # IP injectée à gauche ignorée
+    ("127.0.0.1, 41.223.50.7", "41.223.50.7"),                # se faire passer pour localhost : ignoré
+    ("9.9.9.9, 41.223.50.7, 10.0.0.5", "41.223.50.7"),        # saut interne Railway ignoré
+    ("  bidon , 41.223.50.7", "41.223.50.7"),                 # valeur invalide ignorée
+])
+def test_ip_client_prend_l_ip_ajoutee_par_le_proxy(xff, attendu):
+    from app.core.client_ip import ip_client
+    assert ip_client(_req_xff(xff)) == attendu
+
+
+def test_rotation_de_x_forwarded_for_ne_contourne_pas_le_rate_limit():
+    """L'attaquant change la partie gauche à chaque requête : la clé ne bouge pas."""
+    from app.core.rate_limit import _key_func
+    cles = {_key_func(_req_xff(f"5.5.5.{i}, 41.223.50.7")) for i in range(20)}
+    assert cles == {"41.223.50.7"}
+
+
+def test_health_public_ne_revele_rien():
+    import asyncio
+    from app.main import health_check
+    assert asyncio.run(health_check()) == {"status": "healthy"}
