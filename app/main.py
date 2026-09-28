@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -291,6 +291,7 @@ app = FastAPI(
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from .core.rate_limit import limiter
+from .core.client_ip import ip_client
 
 app.state.limiter = limiter
 
@@ -303,7 +304,7 @@ async def _rate_limit_handler(request, exc: RateLimitExceeded):
         extra={
             "path": request.url.path,
             "method": request.method,
-            "client_ip": request.client.host if request.client else "unknown",
+            "client_ip": ip_client(request),
             "limit": str(exc.detail),
         },
     )
@@ -391,17 +392,13 @@ async def health_check():
     une micro-coupure (le worker tourne, c'est suffisant pour rester en
     service). Pour le monitoring fonctionnel, utiliser `/health/deep`.
     """
-    from .services.notification_service import notification_service
-    return {
-        "status": "healthy",
-        "version": settings.APP_VERSION,
-        "firebase_push": "ok" if notification_service.firebase_app else "disabled",
-    }
+    # Public : ne rien révéler de plus que « vivant » (ni version, ni services).
+    return {"status": "healthy"}
 
 
 @app.get("/health/deep")
-@limiter.exempt
-async def health_deep():
+@limiter.limit("30/minute")  # vérifie DB + Redis + R2 : pas exempté (sinon martelable)
+async def health_deep(request: Request):
     """Readiness probe (lent, ~50-200ms) — utilisé par UptimeRobot/BetterStack.
 
     Vérifie les dépendances critiques (DB, Redis, R2). Retourne 503 si

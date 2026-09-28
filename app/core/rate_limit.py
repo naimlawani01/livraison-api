@@ -17,18 +17,18 @@ Utilisation :
 en a besoin pour extraire l'IP du client.
 """
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
+from .client_ip import ip_client
 from .config import settings
 
 
 def _key_func(request) -> str:
-    """Identifie un client pour le compteur : son IP.
+    """Identifie un client pour le compteur.
 
-    `get_remote_address` lit `request.client.host`. Derrière le proxy Railway,
-    ce champ ne contient la VRAIE IP client que si uvicorn tourne avec
-    `--proxy-headers --forwarded-allow-ips=*` (cf. start.sh) — sinon c'est l'IP
-    du proxy et le rate-limit devient global. Ce flag est activé au démarrage.
+    Sans JWT : son IP RÉELLE via `ip_client()` (IP ajoutée par le proxy Railway,
+    non falsifiable). Surtout pas `request.client.host` : avec uvicorn
+    `--forwarded-allow-ips="*"` c'est la 1re valeur de X-Forwarded-For, écrite par
+    le client → contournement du rate-limit en la changeant à chaque requête.
 
     Requête authentifiée (JWT valide) → compteur **par utilisateur** : en Guinée,
     beaucoup d'abonnés mobiles partagent la même IP publique (CGNAT opérateur) ;
@@ -44,7 +44,7 @@ def _key_func(request) -> str:
                 return f"user:{payload['sub']}"
         except Exception:  # noqa: BLE001 — token invalide/expiré : repli sur l'IP
             pass
-    return get_remote_address(request)
+    return ip_client(request)
 
 
 # Backend Redis si DSN dispo, sinon in-memory (utile pour les tests locaux
