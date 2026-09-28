@@ -82,6 +82,7 @@ async def estimer_prix(
 
     return {
         "distance_km":          round(distance_km, 2),
+        "distance_route_km":    tarif.distance_route_km,  # facturée (vol d'oiseau × 1,3)
         "duree_estimee_minutes": duree,
         "prix_estime":           tarif.prix,
         "commission_plateforme": tarif.commission,
@@ -690,6 +691,14 @@ async def annuler_course(
             detail="Le colis a déjà été récupéré : contactez le support Sönaiyaa pour annuler."
         )
     
+    # Expéditeur qui annule alors que le livreur est déjà en route / sur place
+    # → indemnité de déplacement (versée après restitution de la commission).
+    indemniser = bool(
+        is_expediteur_owner
+        and course.livreur_id
+        and course.status in (CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION)
+    )
+
     # Si un livreur était assigné, le libérer
     if course.livreur_id:
         livreur_query = select(Livreur).where(Livreur.id == course.livreur_id)
@@ -716,6 +725,12 @@ async def annuler_course(
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Remboursement Crédit échoué (course %s): %s", course.id, e)
+
+    if indemniser:
+        try:
+            await credit_service.payer_indemnite_annulation(db, course)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Indemnité d'annulation échouée (course %s): %s", course.id, e)
 
     course.status = CourseStatus.ANNULEE
     course.annulee_at = datetime.now(timezone.utc)

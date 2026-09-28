@@ -203,6 +203,26 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _boucle_expiration_courses(redis_client) -> None:
+    """Toutes les 5 min : expire les courses en attente depuis trop longtemps.
+    Verrou Redis → un seul worker uvicorn exécute le passage."""
+    from .core.database import async_session_maker
+    from .services.expiration_service import expirer_courses
+    while True:
+        await asyncio.sleep(300)
+        try:
+            if not await redis_client.set("lock:expiration_courses", "1", nx=True, ex=240):
+                continue
+            async with async_session_maker() as db:
+                n = await expirer_courses(db)
+            if n:
+                logger.warning("Courses expirées", extra={"nombre": n})
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Expiration des courses échouée")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application"""
@@ -223,10 +243,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[Firebase] ATTENTION : Admin SDK non configuré — push notifications DÉSACTIVÉES. Ajouter FIREBASE_CREDENTIALS dans les variables d'environnement.")
     
+    tache_expiration = asyncio.create_task(_boucle_expiration_courses(redis_client))
+
     yield
     
     # Shutdown
     logger.info("Shutting down application...")
+    tache_expiration.cancel()
     await close_db()
     
     if manager.pubsub:

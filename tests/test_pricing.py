@@ -26,9 +26,10 @@ class TestPlancher:
 
 class TestGrilleDistance:
     @pytest.mark.parametrize("km, prix, commission, gain", [
-        (2, 13_000, 1_560, 11_440),
-        (5, 17_500, 2_100, 15_400),
-        (15, 32_500, 3_900, 28_600),
+        # distance facturée = vol d'oiseau × 1,3 (COEF_ROUTE)
+        (2, 14_000, 1_680, 12_320),
+        (5, 20_000, 2_400, 17_600),
+        (15, 39_000, 4_680, 34_320),
     ])
     def test_grille_de_reference(self, km, prix, commission, gain):
         t = calculer_tarif(km)
@@ -54,12 +55,12 @@ class TestInvariants:
 
 class TestTypeColis:
     def test_fragile_majore_de_20pct(self):
-        # 5 km standard = 17 500 ; ×1.2 = 21 000
-        assert calculer_tarif(5, "fragile").prix == 21_000
+        # 5 km → 6,5 km route : 19 750 ; ×1.2 = 23 700 → arrondi 500 = 23 500
+        assert calculer_tarif(5, "fragile").prix == 23_500
 
     def test_volumineux_majore_de_40pct(self):
-        # 2 km standard = 13 000 ; ×1.4 = 18 200 → arrondi 500 = 18 000
-        assert calculer_tarif(2, "volumineux").prix == 18_000
+        # 2 km → 2,6 km route : 13 900 ; ×1.4 = 19 460 → arrondi 500 = 19 500
+        assert calculer_tarif(2, "volumineux").prix == 19_500
 
     def test_type_inconnu_retombe_sur_standard(self):
         assert multiplicateur_colis("bijou") == 1.0
@@ -77,3 +78,13 @@ class TestGarde:
     def test_distance_negative_rejetee(self):
         with pytest.raises(ValueError):
             calculer_tarif(-1)
+
+
+class TestCoefRoute:
+    def test_distance_route_est_vol_oiseau_x_1_3(self):
+        from app.services.pricing import COEF_ROUTE
+        t = calculer_tarif(10)
+        assert COEF_ROUTE == 1.3
+        assert t.distance_km == 10
+        assert t.distance_route_km == 13
+
