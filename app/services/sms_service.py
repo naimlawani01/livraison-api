@@ -99,9 +99,10 @@ class SMSService:
         3 variantes selon l'état :
         - position_required=True : on a besoin que le client partage sa
           position pour calculer le prix.
-        - checkout_url donné : Mobile Money, prix connu, lien paiement +
-          tracking dans le SMS.
-        - Sinon : Cash, prix connu, lien tracking uniquement.
+        - checkout_url donné : le client règle la course (Mobile Money),
+          montant + lien de paiement.
+        - Sinon : l'expéditeur règle la course, le client n'a rien à payer →
+          lien de suivi uniquement, sans montant.
         """
         prenom = nom_client.split()[0] if nom_client else "Bonjour"
 
@@ -109,12 +110,11 @@ class SMSService:
             message = f"Livraison {expediteur_nom}. Partagez votre position : {tracking_url}"
             return await self._send(telephone, message)
 
-        montant_fmt = f"{int(montant):,}".replace(",", " ") + "GNF"
-
         if checkout_url:
+            montant_fmt = f"{int(montant):,}".replace(",", " ") + "GNF"
             message = f"Livraison {expediteur_nom} {montant_fmt}. Payer : {checkout_url}"
         else:
-            message = f"Livraison {expediteur_nom} {montant_fmt}. Especes. Suivre : {tracking_url}"
+            message = f"Livraison {expediteur_nom}. Suivre : {tracking_url}"
 
         return await self._send(telephone, message)
 

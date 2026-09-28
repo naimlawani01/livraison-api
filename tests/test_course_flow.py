@@ -112,7 +112,9 @@ class TestCreation:
         cmd = await create_course(_payload(ModePaiement.CASH), p, session)
         assert cmd.status == CourseStatus.CREEE
         assert cmd.commission_plateforme == 1_200      # 12 % de 10 000 (plancher)
-        assert cmd.montant_livreur == 8_800
+        assert cmd.montant_livreur == 8_800      # 88 % au livreur
+        assert cmd.payeur == "expediteur"          # défaut cash
+        assert cmd.montant_a_encaisser == 8_800  # remis par l'expéditeur au livreur
         assert await credit_service.credit_disponible(session, p.id) == 48_800
 
     async def test_credit_insuffisant_bloque_la_creation(self, session):
@@ -131,13 +133,45 @@ class TestCreation:
         n = (await session.execute(select(func.count()).select_from(Course))).scalar()
         assert n == 0
 
-    async def test_momo_ne_touche_pas_le_credit(self, session):
+    async def test_momo_debite_aussi_la_commission_du_credit(self, session):
         from app.api.v1.endpoints.courses import create_course
         from app.models.course import ModePaiement
         from app.services import credit_service
         _, p = await _creer_expediteur(session, credit=50_000)
-        await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
-        assert await credit_service.credit_disponible(session, p.id) == 50_000
+        cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        assert cmd.montant_livreur == 8_800
+        assert cmd.payeur == "client"             # défaut Mobile Money
+        assert cmd.montant_a_encaisser == 10_000  # le client paie le prix complet
+        assert await credit_service.credit_disponible(session, p.id) == 48_800  # garantie
+
+    async def test_client_ne_peut_pas_payer_en_especes(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, Payeur
+        _, p = await _creer_expediteur(session, credit=50_000)
+        payload = _payload(ModePaiement.CASH)
+        payload.payeur = Payeur.CLIENT
+        with pytest.raises(HTTPException) as exc:
+            await create_course(payload, p, session)
+        assert exc.value.status_code == 400
+
+    async def test_expediteur_paie_en_mobile_money(self, session):
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement, Payeur
+        _, p = await _creer_expediteur(session, credit=50_000)
+        payload = _payload(ModePaiement.MOBILE_MONEY)
+        payload.payeur = Payeur.EXPEDITEUR
+        cmd = await create_course(payload, p, session)
+        assert cmd.montant_a_encaisser == 8_800   # il ne règle que la part livreur
+
+    async def test_momo_credit_insuffisant_bloque_la_creation(self, session):
+        from fastapi import HTTPException
+        from app.api.v1.endpoints.courses import create_course
+        from app.models.course import ModePaiement
+        _, p = await _creer_expediteur(session, credit=500)
+        with pytest.raises(HTTPException) as exc:
+            await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        assert exc.value.status_code == 400
 
 
 # ── Fin de course ────────────────────────────────────────────────────────────
@@ -201,6 +235,32 @@ class TestAnnulation:
         assert cmd.status == CourseStatus.ANNULEE
         assert await credit_service.credit_disponible(session, p.id) == 50_000  # remboursé
 
+    async def test_annulation_momo_rembourse_le_credit(self, session):
+        from app.api.v1.endpoints.courses import create_course, annuler_course
+        from app.models.course import ModePaiement
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        user_p, p = await _creer_expediteur(session, credit=50_000)
+        cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user_p, session)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000
+
+    async def test_course_sans_commission_reservee_pas_remboursee(self, session):
+        # Course MM créée avant le débit systématique : rien à rembourser.
+        from app.api.v1.endpoints.courses import create_course, annuler_course
+        from app.models.course import ModePaiement
+        from app.models.credit_transaction import CreditTransaction
+        from app.schemas.course import CourseAnnulation
+        from app.services import credit_service
+        from sqlalchemy import delete
+        user_p, p = await _creer_expediteur(session, credit=50_000)
+        cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
+        await session.execute(delete(CreditTransaction).where(CreditTransaction.course_id == cmd.id))
+        p.credit_solde = 50_000
+        await session.commit()
+        await annuler_course(cmd.id, CourseAnnulation(raison="test"), user_p, session)
+        assert await credit_service.credit_disponible(session, p.id) == 50_000
+
 
 # ── Garde-fous paiement Mobile Money ─────────────────────────────────────────
 
@@ -209,7 +269,7 @@ class TestGardeFousMobileMoney:
         from fastapi import HTTPException
         from app.api.v1.endpoints.courses import create_course, accepter_course
         from app.models.course import ModePaiement
-        _, p = await _creer_expediteur(session, credit=0)
+        _, p = await _creer_expediteur(session, credit=50_000)
         _, liv = await _creer_livreur(session)
         cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
         with pytest.raises(HTTPException) as exc:
@@ -220,7 +280,7 @@ class TestGardeFousMobileMoney:
         from app.api.v1.endpoints.courses import create_course
         from app.models.course import ModePaiement, CourseStatus
         from app.services.matching_service import MatchingService
-        _, p = await _creer_expediteur(session, credit=0)
+        _, p = await _creer_expediteur(session, credit=50_000)
         cmd = await create_course(_payload(ModePaiement.MOBILE_MONEY), p, session)
         cmd.status = CourseStatus.ANNULEE
         await session.commit()

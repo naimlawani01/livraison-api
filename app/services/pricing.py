@@ -1,12 +1,22 @@
 """Tarification des courses Sönaiyaa — source de vérité du modèle de prix.
 
 Le prix d'une course est fonction de la distance (point de retrait de
-l'expéditeur → quartier de destination). La plateforme prélève une commission ;
-le reste revient au livreur.
+l'expéditeur → quartier de destination).
+
+Modèle « l'expéditeur cherche un livreur » — identique en cash et Mobile Money :
 
     prix         = arrondi(PRIX_BASE + PRIX_KM × distance_km) × mult_colis
-    commission   = prix × TAUX_COMMISSION      (débitée du Crédit de l'expéditeur)
-    gain_livreur = prix − commission           (réglé au livreur)
+    commission   = prix × TAUX_COMMISSION      (part Sönaiyaa, supportée par le livreur)
+    gain_livreur = prix − commission           (ce que touche le livreur)
+
+La commission est **garantie par le Crédit de l'expéditeur** (débitée à la
+création) : Sönaiyaa ne la réclame jamais au livreur. Qui règle la course
+(``Course.payeur``) :
+
+* ``expediteur`` : il remet ``gain_livreur`` au livreur (cash à la récupération,
+  ou Mobile Money) — coût total pour lui = ``prix``.
+* ``client`` (Mobile Money obligatoire) : le client paie ``prix`` ; au paiement,
+  la commission est rendue au Crédit de l'expéditeur — coût pour lui = 0.
 
 Invariant garanti : ``commission + gain_livreur == prix``.
 
@@ -42,9 +52,9 @@ class Tarif:
 
     Invariant : ``commission + gain_livreur == prix``.
     """
-    prix: int             # ce que paie l'expéditeur (total, ferme)
-    commission: int       # part plateforme, débitée du Crédit de l'expéditeur
-    gain_livreur: int     # part livreur (réglée en cash ou via la plateforme)
+    prix: int             # coût total de la course (payé par l'expéditeur ou son client)
+    commission: int       # part Sönaiyaa, garantie par le Crédit de l'expéditeur
+    gain_livreur: int     # part livreur (cash de l'expéditeur, ou crédité sur ses Gains)
     distance_km: float
     type_colis: str
     mult_colis: float
