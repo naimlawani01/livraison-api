@@ -13,6 +13,7 @@ import logging
 import uuid
 from typing import Optional
 
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ router = APIRouter()
 
 @router.post("/courses/{course_id}/relancer", status_code=status.HTTP_200_OK)
 async def relancer_paiement(
-    course_id: str,
+    course_id: UUID,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
@@ -101,7 +102,10 @@ async def relancer_paiement(
             await redis_client.delete(lock_key)
         except Exception:  # noqa: BLE001
             pass
-        raise HTTPException(status_code=502, detail=str(e))
+        # Le détail brut du PSP (corps de réponse) reste dans les logs, jamais
+        # renvoyé au client (fuite d'informations internes).
+        logger.error("GeniusPay relance échouée", extra={"course_id": str(course_id), "erreur": str(e)})
+        raise HTTPException(status_code=502, detail="Le service de paiement est indisponible. Réessayez plus tard.")
 
     course.geniuspay_reference = paiement.get("reference")
     course.geniuspay_checkout_url = paiement.get("checkout_url")

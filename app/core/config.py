@@ -136,3 +136,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# SÉCURITÉ : DEBUG en production exposerait les traces d'erreur (requêtes SQL,
+# chemins, valeurs), la doc /docs, et VALIDERAIT LES COMPTES SANS CODE SMS à
+# l'inscription. Une erreur de variable Railway ne doit jamais l'activer en prod.
+if settings.ENVIRONMENT == "production" and settings.DEBUG:
+    import logging as _logging
+    _logging.getLogger(__name__).error("DEBUG=True ignoré en production (forcé à False)")
+    settings.DEBUG = False

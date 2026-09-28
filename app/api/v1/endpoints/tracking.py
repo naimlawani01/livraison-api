@@ -8,6 +8,7 @@ La page affiche les étapes de la livraison + une carte Leaflet en temps réel
 import logging
 import secrets
 
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -33,7 +34,7 @@ class TrackingLinkResponse(BaseModel):
 
 @router.post("/courses/{course_id}/tracking-link", response_model=TrackingLinkResponse)
 async def generate_tracking_link(
-    course_id: str,
+    course_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

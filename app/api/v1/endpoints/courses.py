@@ -422,7 +422,7 @@ async def get_mes_courses(
 
 @router.post("/{course_id}/accepter", response_model=CourseResponse)
 async def accepter_course(
-    course_id: str,
+    course_id: UUID,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
@@ -548,7 +548,7 @@ async def _controler_position_livraison(course: Course, livreur: Livreur) -> Non
 
 @router.patch("/{course_id}/statut", response_model=CourseResponse)
 async def update_course_status(
-    course_id: str,
+    course_id: UUID,
     nouveau_statut: CourseStatus,
     code_livraison: Optional[str] = None,
     livreur: Livreur = Depends(get_current_livreur),
@@ -677,7 +677,7 @@ async def update_course_status(
 
 @router.post("/{course_id}/annuler", response_model=CourseResponse)
 async def annuler_course(
-    course_id: str,
+    course_id: UUID,
     annulation: CourseAnnulation,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -867,7 +867,7 @@ async def rediffuser_course(
 
 @router.post("/{course_id}/evaluer", response_model=CourseResponse)
 async def evaluer_livreur(
-    course_id: str,
+    course_id: UUID,
     evaluation: CourseEvaluation,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
@@ -910,7 +910,7 @@ async def evaluer_livreur(
 
 @router.post("/{course_id}/confirmer-paiement", response_model=CourseResponse)
 async def confirmer_paiement(
-    course_id: str,
+    course_id: UUID,
     livreur: Livreur = Depends(get_current_livreur),
     db: AsyncSession = Depends(get_db)
 ):
@@ -954,7 +954,7 @@ async def confirmer_paiement(
 
 @router.get("/{course_id}", response_model=CourseWithDetails)
 async def get_course_details(
-    course_id: str,
+    course_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

@@ -11,6 +11,7 @@ import html as _html
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
 from ....core.rate_limit import limiter
@@ -38,7 +39,7 @@ class GenerateLocationLinkResponse(BaseModel):
 
 @router.post("/courses/{course_id}/location-link", response_model=GenerateLocationLinkResponse)
 async def generate_location_link(
-    course_id: str,
+    course_id: UUID,
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db)
 ):

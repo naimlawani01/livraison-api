@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: livraison
       POSTGRES_DB: livraison_db
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"  # local uniquement : jamais exposé au réseau (Wi-Fi public…)
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # Redis sans mot de passe : local uniquement
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -40,7 +40,7 @@ services:
       DEBUG: "True"
       ENVIRONMENT: local
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

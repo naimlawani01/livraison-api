@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -252,7 +253,7 @@ async def list_livreurs(
 
 @router.get("/{livreur_id}", response_model=LivreurResponse)
 async def get_livreur(
-    livreur_id: str,
+    livreur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
