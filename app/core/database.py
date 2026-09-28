@@ -5,13 +5,22 @@ from .config import settings
 # Création du moteur de base de données
 # echo=False même en DEBUG : les requêtes SQL polluent les logs au quotidien.
 # Pour activer ponctuellement, mettre SQLALCHEMY_ECHO=true en env.
+# statement_timeout : aucune requête ne peut monopoliser la base plus de 30 s
+# (requête pathologique, abus d'un endpoint lourd) — PostgreSQL l'annule.
+_connect_args = (
+    {"server_settings": {"statement_timeout": "30000", "idle_in_transaction_session_timeout": "60000"}}
+    if settings.DATABASE_URL.startswith("postgresql+asyncpg")
+    else {}
+)
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.SQLALCHEMY_ECHO,
     future=True,
     pool_pre_ping=True,
     pool_size=10,
-    max_overflow=20
+    max_overflow=20,
+    connect_args=_connect_args,
 )
 
 # Session factory

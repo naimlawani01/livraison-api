@@ -113,7 +113,11 @@ async def recharger_credit(
             metadata={"type": "credit_recharge", "montant": int(body.montant)},
         )
     except GeniusPayError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+        logger.error("GeniusPay recharge Crédit échouée", extra={"erreur": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Le service de paiement est indisponible. Réessayez plus tard.",
+        )
 
     return {
         "reference": paiement.get("reference"),

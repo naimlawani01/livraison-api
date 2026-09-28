@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
@@ -178,7 +179,7 @@ async def list_test_accounts(
 
 @router.delete("/test-accounts/{user_id}")
 async def delete_test_account(
-    user_id: str,
+    user_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -354,7 +355,7 @@ async def get_livreurs_en_attente(
 
 @router.post("/livreurs/{livreur_id}/valider")
 async def valider_livreur(
-    livreur_id: str,
+    livreur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -384,7 +385,7 @@ async def valider_livreur(
 
 @router.post("/livreurs/{livreur_id}/rejeter")
 async def rejeter_livreur(
-    livreur_id: str,
+    livreur_id: UUID,
     body: dict,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -417,7 +418,7 @@ async def rejeter_livreur(
 
 @router.post("/livreurs/{livreur_id}/suspendre")
 async def suspendre_livreur(
-    livreur_id: str,
+    livreur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -492,7 +493,7 @@ async def get_tous_livreurs(
 
 @router.get("/livreurs/{livreur_id}", response_model=dict)
 async def get_livreur_detail(
-    livreur_id: str,
+    livreur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -562,7 +563,7 @@ async def get_expediteurs_en_attente(
 
 @router.post("/expediteurs/{expediteur_id}/valider")
 async def valider_expediteur(
-    expediteur_id: str,
+    expediteur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -591,7 +592,7 @@ async def valider_expediteur(
 
 @router.post("/expediteurs/{expediteur_id}/rejeter")
 async def rejeter_expediteur(
-    expediteur_id: str,
+    expediteur_id: UUID,
     body: dict,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -623,7 +624,7 @@ async def rejeter_expediteur(
 
 @router.post("/expediteurs/{expediteur_id}/suspendre")
 async def suspendre_expediteur(
-    expediteur_id: str,
+    expediteur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -691,7 +692,7 @@ async def get_tous_expediteurs(
 
 @router.get("/expediteurs/{expediteur_id}", response_model=dict)
 async def get_expediteur_detail(
-    expediteur_id: str,
+    expediteur_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -827,7 +828,7 @@ async def get_retraits_en_attente(
 
 @router.post("/wallet/retraits/{txn_id}/valider")
 async def valider_retrait(
-    txn_id: str,
+    txn_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -846,7 +847,7 @@ async def valider_retrait(
 
 @router.post("/wallet/retraits/{txn_id}/rejeter")
 async def rejeter_retrait(
-    txn_id: str,
+    txn_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -927,7 +928,7 @@ async def get_tous_users(
 
 @router.post("/users/{user_id}/suspendre")
 async def suspendre_user(
-    user_id: str,
+    user_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -952,7 +953,7 @@ async def suspendre_user(
 
 @router.delete("/users/{user_id}")
 async def supprimer_user(
-    user_id: str,
+    user_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -996,7 +997,7 @@ class CreditManuelRequest(BaseModel):
 
 @router.post("/expediteurs/{expediteur_id}/credit", status_code=status.HTTP_201_CREATED)
 async def crediter_expediteur(
-    expediteur_id: str,
+    expediteur_id: UUID,
     body: CreditManuelRequest,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
@@ -1024,7 +1025,7 @@ async def crediter_expediteur(
 
 @router.get("/expediteurs/{expediteur_id}/credit")
 async def get_expediteur_credit(
-    expediteur_id: str,
+    expediteur_id: UUID,
     limit: int = 30,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
@@ -1096,7 +1097,7 @@ async def lister_remboursements(
 
 @router.post("/remboursements/{course_id}/effectue")
 async def marquer_rembourse(
-    course_id: str,
+    course_id: UUID,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
