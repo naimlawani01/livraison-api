@@ -851,15 +851,16 @@ async def rejeter_retrait(
     db: AsyncSession = Depends(get_db)
 ):
     """Rejeter une demande de retrait et rembourser le livreur"""
-    query = select(WalletTransaction).where(WalletTransaction.id == txn_id)
+    # Verrou : un double-clic admin ne doit pas rembourser deux fois.
+    query = select(WalletTransaction).where(WalletTransaction.id == txn_id).with_for_update()
     result = await db.execute(query)
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction non trouvée")
     if txn.statut != "en_attente":
         raise HTTPException(status_code=400, detail="Cette demande a déjà été traitée")
-    # Rembourser le solde
-    livreur_q = select(Livreur).where(Livreur.id == txn.livreur_id)
+    # Rembourser le solde (verrou : écriture concurrente possible avec un retrait)
+    livreur_q = select(Livreur).where(Livreur.id == txn.livreur_id).with_for_update()
     livreur_r = await db.execute(livreur_q)
     livreur = livreur_r.scalar_one_or_none()
     if livreur:

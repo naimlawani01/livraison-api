@@ -204,23 +204,32 @@ manager = ConnectionManager()
 
 
 async def _boucle_expiration_courses(redis_client) -> None:
-    """Toutes les 5 min : expire les courses en attente depuis trop longtemps.
-    Verrou Redis → un seul worker uvicorn exécute le passage."""
+    """Toutes les 5 min : expire les courses en attente depuis trop longtemps et
+    réconcilie avec le PSP les retraits dont le webhook n'est jamais arrivé.
+
+    Verrou Redis → un seul worker uvicorn exécute le passage. Si Redis est en
+    panne, on exécute quand même : chaque opération est idempotente et protégée
+    par des verrous de ligne en base."""
     from .core.database import async_session_maker
     from .services.expiration_service import expirer_courses
+    from .services.reconciliation_service import reconcilier_retraits
     while True:
         await asyncio.sleep(300)
         try:
-            if not await redis_client.set("lock:expiration_courses", "1", nx=True, ex=240):
-                continue
+            try:
+                if not await redis_client.set("lock:expiration_courses", "1", nx=True, ex=240):
+                    continue
+            except Exception:  # noqa: BLE001
+                logger.warning("Redis indisponible — maintenance exécutée sans verrou")
             async with async_session_maker() as db:
                 n = await expirer_courses(db)
-            if n:
-                logger.warning("Courses expirées", extra={"nombre": n})
+                r = await reconcilier_retraits(db)
+            if n or r:
+                logger.warning("Maintenance courses", extra={"expirees": n, "retraits_reconcilies": r})
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
-            logger.exception("Expiration des courses échouée")
+            logger.exception("Maintenance des courses échouée")
 
 
 @asynccontextmanager

@@ -68,9 +68,20 @@ async def blacklist_token(jti: str, ttl_seconds: int) -> None:
 
 
 async def is_token_blacklisted(jti: str) -> bool:
-    """Retourne True si le jti est dans la blacklist Redis."""
+    """Retourne True si le jti est dans la blacklist Redis.
+
+    Appelé à CHAQUE requête authentifiée : si Redis est en panne, on laisse
+    passer (sinon toute l'API tomberait avec Redis). Compromis assumé : pendant
+    la panne, un token révoqué au logout reste utilisable jusqu'à son
+    expiration normale (8 h max).
+    """
+    import logging
     from .redis import redis_client
-    return await redis_client.exists(f"token_blacklist:{jti}") > 0
+    try:
+        return await redis_client.exists(f"token_blacklist:{jti}") > 0
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("Redis indisponible — blacklist JWT non vérifiée")
+        return False
 
 
 def generate_otp() -> str:

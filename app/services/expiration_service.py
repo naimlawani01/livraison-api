@@ -6,6 +6,11 @@ le client n'a jamais payé / partagé sa position) après
 rendue au Crédit de l'expéditeur, et un paiement Mobile Money éventuel est
 remboursé (avoir ou remboursement client tracé).
 
+⚠️ Webhook perdu : avant d'expirer une course Mobile Money non confirmée qui a
+un lien de paiement, on **demande au PSP** si elle a été payée. Si oui, on la
+confirme au lieu de l'annuler ; si le PSP ne répond pas, on la laisse pour le
+passage suivant (on n'annule jamais une course peut-être payée).
+
 Lancé toutes les 5 min par une tâche de fond (``main.py``), avec un verrou Redis
 pour qu'un seul worker uvicorn le fasse à la fois.
 """
@@ -13,55 +18,47 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..models.course import Course, CourseStatus
-from . import credit_service, remboursement_service
+from ..models.course import Course, CourseStatus, ModePaiement
+from . import paiement_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
 
 STATUTS_EXPIRABLES = (CourseStatus.CREEE, CourseStatus.DIFFUSEE)
+RAISON = "Expirée : aucun livreur ou paiement dans le délai"
 
 
 async def expirer_courses(db: AsyncSession, maintenant: Optional[datetime] = None) -> int:
     """Annule les courses en attente depuis trop longtemps. Retourne leur nombre."""
     maintenant = maintenant or datetime.now(timezone.utc)
     limite = maintenant - timedelta(minutes=settings.COURSE_EXPIRATION_MINUTES)
-    ids = (await db.execute(
-        select(Course.id).where(Course.status.in_(STATUTS_EXPIRABLES), Course.created_at < limite)
+    courses = (await db.execute(
+        select(Course).where(Course.status.in_(STATUTS_EXPIRABLES), Course.created_at < limite)
     )).scalars().all()
 
     n = 0
-    for course_id in ids:
-        # UPDATE conditionnel = atomique : si un livreur accepte au même moment,
-        # le statut a changé et on ne touche à rien.
-        res = await db.execute(
-            update(Course)
-            .where(Course.id == course_id, Course.status.in_(STATUTS_EXPIRABLES))
-            .values(
-                status=CourseStatus.ANNULEE,
-                annulee_at=maintenant,
-                raison_annulation="Expirée : aucun livreur ou paiement dans le délai",
-            )
-            .execution_options(synchronize_session=False)
-        )
-        await db.commit()
-        if res.rowcount != 1:
-            continue
-        course = (await db.execute(select(Course).where(Course.id == course_id))).scalar_one()
-        await db.refresh(course)
-        try:
-            await credit_service.restituer_commission(
-                db, course.expediteur_id, course.id,
-                description=f"Remboursement course expirée #{course.numero_course}",
-            )
-            await remboursement_service.enregistrer_remboursement(db, course)
-        except Exception as e:  # noqa: BLE001
-            logger.error("Expiration — restitution échouée", extra={"course_id": str(course_id), "erreur": str(e)})
-        await _prevenir_expediteur(db, course)
-        n += 1
+    for course in courses:
+        if (
+            course.mode_paiement == ModePaiement.MOBILE_MONEY
+            and course.paiement_confirme != "oui"
+            and course.geniuspay_reference
+        ):
+            etat = await reconciliation_service.statut_paiement(course.geniuspay_reference)
+            if etat == "paye":
+                await paiement_service.confirmer_paiement_course(db, course, course.geniuspay_reference)
+                logger.warning("Paiement retrouvé auprès du PSP (webhook perdu)",
+                               extra={"course_id": str(course.id)})
+                continue
+            if etat == "inconnu":
+                continue  # PSP injoignable : on retentera au prochain passage
+
+        annulee = await paiement_service.annuler_course_systeme(db, course.id, RAISON)
+        if annulee:
+            await _prevenir_expediteur(db, annulee)
+            n += 1
     return n
 
 
