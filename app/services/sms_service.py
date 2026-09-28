@@ -92,6 +92,7 @@ class SMSService:
         tracking_url: str,
         checkout_url: Optional[str] = None,
         position_required: bool = False,
+        code_livraison: Optional[str] = None,
     ) -> bool:
         """
         SMS unifié envoyé au client à la création de la course.
@@ -106,15 +107,19 @@ class SMSService:
         """
         prenom = nom_client.split()[0] if nom_client else "Bonjour"
 
+        # Le code n'est connu que du client (et de l'expéditeur) : le livreur le
+        # demande à la remise du colis. Jamais affiché sur la page de suivi.
+        code_txt = f" Code livraison : {code_livraison} (a donner au livreur)." if code_livraison else ""
+
         if position_required:
-            message = f"Livraison {expediteur_nom}. Partagez votre position : {tracking_url}"
+            message = f"Livraison {expediteur_nom}. Partagez votre position : {tracking_url}{code_txt}"
             return await self._send(telephone, message)
 
         if checkout_url:
             montant_fmt = f"{int(montant):,}".replace(",", " ") + "GNF"
-            message = f"Livraison {expediteur_nom} {montant_fmt}. Payer : {checkout_url}"
+            message = f"Livraison {expediteur_nom} {montant_fmt}. Payer : {checkout_url}{code_txt}"
         else:
-            message = f"Livraison {expediteur_nom}. Suivre : {tracking_url}"
+            message = f"Livraison {expediteur_nom}. Suivre : {tracking_url}{code_txt}"
 
         return await self._send(telephone, message)
 

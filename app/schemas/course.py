@@ -40,7 +40,9 @@ class CourseCreate(CourseBase):
         description="Qui règle la course : expediteur | client (client ⇒ Mobile Money). "
                     "Par défaut : client si Mobile Money, expediteur si cash.",
     )
-    exige_code_livraison: Optional[bool] = Field(default=False, description="Exiger un code PIN à la livraison")
+    # Activé par défaut : sans code, un livreur peut marquer « livré » sans avoir
+    # remis le colis. Le code est envoyé au client par SMS.
+    exige_code_livraison: Optional[bool] = Field(default=True, description="Exiger un code PIN à la livraison")
     nature_colis: str = Field(default="standard", description="standard | alimentaire | fragile | documents | volumineux")
 
 

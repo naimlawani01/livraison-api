@@ -14,7 +14,7 @@ from ....schemas.livreur import (
     LivreurDisponibiliteUpdate
 )
 from sqlalchemy.orm import selectinload
-from ....utils.dependencies import get_current_user, get_current_livreur
+from ....utils.dependencies import get_current_user, get_current_livreur, get_current_admin
 from ....services.storage_service import storage_service
 from ....services.notification_service import notification_service
 from ....models.course import Course, CourseStatus
@@ -230,9 +230,14 @@ async def list_livreurs(
     skip: int = 0,
     limit: int = 50,
     disponible_only: bool = False,
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Lister les livreurs (pour admin)"""
+    """Lister les livreurs (admin uniquement).
+
+    SÉCURITÉ : était public sans authentification → exposait à n'importe qui la
+    pièce d'identité, le permis, la position GPS en direct, l'e-mail et la plaque
+    de TOUS les livreurs."""
     query = select(Livreur)
     
     if disponible_only:
@@ -248,9 +253,10 @@ async def list_livreurs(
 @router.get("/{livreur_id}", response_model=LivreurResponse)
 async def get_livreur(
     livreur_id: str,
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtenir un livreur par ID"""
+    """Obtenir un livreur par ID (admin uniquement — données personnelles)."""
     query = select(Livreur).where(Livreur.id == livreur_id)
     result = await db.execute(query)
     livreur = result.scalar_one_or_none()

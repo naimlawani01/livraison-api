@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     # est déjà en route (ACCEPTEE / EN_RECUPERATION). Prise sur le Crédit de
     # l'expéditeur, plafonnée à son solde (jamais négatif).
     INDEMNITE_ANNULATION_LIVREUR: int = 3_000
+    # Livreur qui disparaît : une course ACCEPTEE dont le livreur n'a plus donné
+    # de position depuis ce délai est remise à disposition des autres livreurs.
+    DELAI_LIBERATION_COURSE_MINUTES: int = 30
+    # Course en récupération / livraison depuis plus longtemps que ce délai
+    # (depuis l'acceptation) → alerte admin + expéditeur (colis possiblement perdu).
+    DELAI_ALERTE_COURSE_MINUTES: int = 180
     
     # Commission — nouveau modèle : 12 %. Source de vérité canonique dans
     # app/services/pricing.py (TAUX_COMMISSION). Ce paramètre reste pour le code

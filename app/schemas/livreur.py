@@ -24,9 +24,9 @@ class LivreurUpdate(BaseModel):
     type_vehicule: Optional[str] = None
     marque_modele: Optional[str] = None
     plaque_immatriculation: Optional[str] = None
-    piece_identite_url: Optional[str] = None
-    permis_conduire_url: Optional[str] = None
-    photo_profil_url: Optional[str] = None
+    # SÉCURITÉ : pas de *_url ici — les documents ne se changent que via
+    # POST /livreurs/upload-document (fichier vérifié, stocké sur R2). Sinon un
+    # livreur pouvait injecter n'importe quelle URL (ex. lien piégé vu par l'admin).
 
 
 class LivreurLocationUpdate(BaseModel):

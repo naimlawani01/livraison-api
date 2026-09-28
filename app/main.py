@@ -211,7 +211,7 @@ async def _boucle_expiration_courses(redis_client) -> None:
     panne, on exécute quand même : chaque opération est idempotente et protégée
     par des verrous de ligne en base."""
     from .core.database import async_session_maker
-    from .services.expiration_service import expirer_courses
+    from .services.expiration_service import expirer_courses, surveiller_courses_en_cours
     from .services.reconciliation_service import reconcilier_retraits
     while True:
         await asyncio.sleep(300)
@@ -224,8 +224,12 @@ async def _boucle_expiration_courses(redis_client) -> None:
             async with async_session_maker() as db:
                 n = await expirer_courses(db)
                 r = await reconcilier_retraits(db)
-            if n or r:
-                logger.warning("Maintenance courses", extra={"expirees": n, "retraits_reconcilies": r})
+                surv = await surveiller_courses_en_cours(db)
+            if n or r or surv["liberees"] or surv["alertes"]:
+                logger.warning("Maintenance courses", extra={
+                    "expirees": n, "retraits_reconcilies": r,
+                    "liberees": surv["liberees"], "alertes": surv["alertes"],
+                })
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

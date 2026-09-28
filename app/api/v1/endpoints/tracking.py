@@ -19,7 +19,7 @@ from ....core.redis import redis_client
 from ....models.course import Course
 from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
-from ....models.user import User
+from ....models.user import User, UserRole
 from ....utils.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,15 @@ async def generate_tracking_link(
 
     if not course:
         raise HTTPException(status_code=404, detail="Course non trouvée")
+
+    # SÉCURITÉ : avant, tout utilisateur connecté obtenait le lien de suivi de
+    # n'importe quelle course (position du livreur, adresse et nom du client).
+    if current_user.role != UserRole.ADMIN:
+        owner = (await db.execute(
+            select(Expediteur.id).where(Expediteur.user_id == current_user.id)
+        )).scalar_one_or_none()
+        if owner is None or owner != course.expediteur_id:
+            raise HTTPException(status_code=403, detail="Accès non autorisé")
 
     if course.tracking_token:
         token = course.tracking_token
