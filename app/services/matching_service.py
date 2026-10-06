@@ -65,7 +65,12 @@ class MatchingService:
         
         # Diffuser en Temps Réel via Redis PubSub (pour le WebSocket admin et livreurs)
         try:
-            course_data = CourseResponse.model_validate(course).model_dump(mode='json')
+            from ..api.v1.endpoints.courses import masquer_client_avant_acceptation
+            # Diffusé à TOUS les livreurs proches : pas de données personnelles
+            # du client ni de jetons (cf. masquer_client_avant_acceptation).
+            course_data = masquer_client_avant_acceptation(
+                CourseResponse.model_validate(course).model_dump(mode='json')
+            )
             await redis_client.publish("livraison_ws", json.dumps({
                 "target": "livreurs",
                 "payload": {

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.database import get_db
 from ....core.redis import redis_client
-from ....models.course import Course
+from ....models.course import Course, CourseStatus
 from ....models.livreur import Livreur
 from ....models.expediteur import Expediteur
 from ....models.user import User, UserRole
@@ -98,7 +98,12 @@ async def tracking_status(token: str, db: AsyncSession = Depends(get_db)):
     livreur_photo = None
     livreur_vehicule = None
     livreur_note = None
-    if course.livreur_id:
+    # Vie privée du livreur : le lien de suivi (transférable, valable sans fin)
+    # ne donne son téléphone et sa position QUE pendant la course active.
+    course_active = course.status in (
+        CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON,
+    )
+    if course.livreur_id and course_active:
         liv_q = select(Livreur).where(Livreur.id == course.livreur_id)
         liv_r = await db.execute(liv_q)
         livreur = liv_r.scalar_one_or_none()

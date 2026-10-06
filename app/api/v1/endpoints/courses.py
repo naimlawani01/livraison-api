@@ -46,6 +46,42 @@ async def _get_user_device_token(db: AsyncSession, user_id) -> Optional[str]:
 
 router = APIRouter()
 
+
+# ── Minimisation des données (ce qu'un livreur voit) ─────────────────────────
+# Jetons qui donnent un pouvoir sur la course : lien de partage de position
+# (permettrait de fausser l'adresse, donc le prix), lien de suivi, lien de
+# paiement. Jamais montrés au livreur.
+_CHAMPS_JAMAIS_AU_LIVREUR = ("location_token", "tracking_token", "geniuspay_checkout_url")
+
+
+def vue_livreur(course) -> dict:
+    """Course telle que le livreur ASSIGNÉ peut la voir (sans les jetons)."""
+    data = CourseResponse.model_validate(course).model_dump(mode="json")
+    for champ in _CHAMPS_JAMAIS_AU_LIVREUR:
+        data[champ] = None
+    return data
+
+
+def masquer_client_avant_acceptation(data: dict) -> dict:
+    """Course proposée à TOUS les livreurs proches : pas encore de données
+    personnelles du client (téléphone, nom complet, adresse exacte, consignes).
+    Sinon, n'importe quel compte livreur aspire les coordonnées de tous les
+    clients de la plateforme. Tout est révélé au livreur une fois qu'il accepte."""
+    tel = data.get("contact_client_telephone") or ""
+    data["contact_client_telephone"] = ("•" * (len(tel) - 2) + tel[-2:]) if len(tel) > 2 else ""
+    nom = (data.get("contact_client_nom") or "").split()
+    data["contact_client_nom"] = nom[0] if nom else "Client"
+    data["adresse_client"] = None
+    data["instructions_speciales"] = None
+    for champ in ("latitude_client", "longitude_client"):
+        if data.get(champ) is not None:
+            data[champ] = round(float(data[champ]), 2)  # ~1 km : zone, pas la porte
+    for champ in _CHAMPS_JAMAIS_AU_LIVREUR:
+        if champ in data:
+            data[champ] = None
+    data.pop("code_livraison", None)
+    return data
+
 @router.post("/estimer-prix")
 async def estimer_prix(
     data: dict,
@@ -385,6 +421,10 @@ async def get_courses_disponibles(
         ))
 
     courses_proches.sort(key=lambda c: c.distance_livreur_km or 999)
+    courses_proches = [
+        CourseDisponibleResponse(**masquer_client_avant_acceptation(c.model_dump()))
+        for c in courses_proches
+    ]
 
     return courses_proches
 
@@ -416,7 +456,7 @@ async def get_mes_courses(
         "total": total,
         "page": page,
         "pages": (total + limit - 1) // limit,
-        "courses": [CourseResponse.model_validate(c).model_dump() for c in courses],
+        "courses": [vue_livreur(c) for c in courses],
     }
 
 
@@ -512,7 +552,7 @@ async def accepter_course(
     except Exception as e:
         logger.warning(f"Notification acceptation échouée: {e}")
     
-    return course
+    return vue_livreur(course)  # jamais les jetons au livreur
 
 
 async def _controler_position_livraison(course: Course, livreur: Livreur) -> None:
@@ -672,7 +712,7 @@ async def update_course_status(
     except Exception as e:
         logger.warning(f"Notification changement statut échouée: {e}")
     
-    return course
+    return vue_livreur(course)  # jamais les jetons au livreur
 
 
 @router.post("/{course_id}/annuler", response_model=CourseResponse)
@@ -827,7 +867,7 @@ async def annuler_course(
     except Exception as e:
         logger.warning(f"Notification annulation échouée: {e}")
     
-    return course
+    return vue_livreur(course) if is_livreur_assigned and not is_admin else course
 
 
 @router.post("/{course_id}/diffuser", response_model=CourseResponse)
@@ -949,7 +989,7 @@ async def confirmer_paiement(
     await db.commit()
     await db.refresh(course)
     
-    return course
+    return vue_livreur(course)  # jamais les jetons au livreur
 
 
 @router.get("/{course_id}", response_model=CourseWithDetails)
@@ -1024,8 +1064,11 @@ async def get_course_details(
                 "longitude": livreur.longitude,
             }
     
-    # Masquer le code_livraison pour le livreur (seul le client le connaît)
+    # Masquer au livreur le code (seul le client le connaît) et les jetons
+    # (partage de position, suivi, paiement).
     if is_livreur_assigned and not is_admin:
         response_dict["code_livraison"] = None
+        for champ in _CHAMPS_JAMAIS_AU_LIVREUR:
+            response_dict[champ] = None
     
     return response_dict
