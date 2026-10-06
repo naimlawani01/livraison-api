@@ -126,6 +126,15 @@ class SMSService:
 
         return await self._send(telephone, message)
 
+    async def envoyer_sms_retour(self, *, telephone: str, expediteur_nom: str) -> bool:
+        """Prévient le client que la livraison n'a pas pu se faire et que le
+        colis repart chez l'expéditeur (aucun montant dans le message)."""
+        message = (
+            f"Livraison {expediteur_nom} impossible : le colis retourne chez "
+            f"{expediteur_nom}. Contactez-le pour une nouvelle livraison."
+        )
+        return await self._send(telephone, message)
+
 
 # Instance singleton
 sms_service = SMSService()

@@ -91,3 +91,22 @@ def gains_retirer(gains: float, montant: float) -> float:
             f"Gains insuffisants : {gains} < retrait {montant}."
         )
     return _arrondir(gains - montant)
+
+
+# ── Retour du colis (livraison impossible) ───────────────────────────────────
+
+def frais_retour(prix: float, taux: float) -> float:
+    """Frais de retour dus au livreur : une part du prix de la course (arrondie
+    à l'unité, montants en GNF)."""
+    if prix <= 0 or taux <= 0:
+        return 0.0
+    return float(round(prix * taux))
+
+
+def credit_prelever_partiel(solde: float, du: float) -> tuple[float, float]:
+    """Prélève sur le Crédit ce qu'il peut d'un montant dû, sans jamais passer
+    sous zéro. Retourne ``(preleve, restant_du)``."""
+    if du <= 0:
+        return 0.0, 0.0
+    preleve = _arrondir(max(0.0, min(solde, du)))
+    return preleve, _arrondir(du - preleve)

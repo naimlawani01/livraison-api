@@ -267,7 +267,8 @@ async def get_platform_stats(
             CourseStatus.DIFFUSEE,
             CourseStatus.ACCEPTEE,
             CourseStatus.EN_RECUPERATION,
-            CourseStatus.EN_LIVRAISON
+            CourseStatus.EN_LIVRAISON,
+            CourseStatus.RETOUR,
         ])
     )
     courses_en_cours_result = await db.execute(courses_en_cours_query)
@@ -275,7 +276,7 @@ async def get_platform_stats(
     
     # Revenus totaux (commissions)
     revenus_query = select(func.sum(Course.commission_plateforme)).where(
-        Course.status == CourseStatus.TERMINEE
+        Course.status.in_([CourseStatus.TERMINEE, CourseStatus.RETOUR, CourseStatus.RETOURNEE])
     )
     revenus_result = await db.execute(revenus_query)
     revenus_totaux = revenus_result.scalar() or 0.0

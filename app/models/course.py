@@ -19,6 +19,26 @@ class CourseStatus(str, enum.Enum):
     EN_LIVRAISON = "EN_LIVRAISON"
     TERMINEE = "TERMINEE"
     ANNULEE = "ANNULEE"
+    # Livraison impossible (client absent / refus) : le livreur rapporte le
+    # colis (RETOUR), puis l'expéditeur confirme l'avoir récupéré (RETOURNEE).
+    RETOUR = "RETOUR"
+    RETOURNEE = "RETOURNEE"
+
+
+# Statuts où le livreur a une course en main (compte dans sa limite de courses
+# simultanées, l'empêche d'être « libre »). Une seule liste pour tout le code.
+STATUTS_LIVREUR_OCCUPE = (
+    CourseStatus.ACCEPTEE,
+    CourseStatus.EN_RECUPERATION,
+    CourseStatus.EN_LIVRAISON,
+    CourseStatus.RETOUR,
+)
+
+
+class RaisonEchecLivraison(str, enum.Enum):
+    """Pourquoi la livraison n'a pas pu se faire."""
+    CLIENT_ABSENT = "client_absent"
+    REFUS_CLIENT = "refus_client"
 
 
 class ModePaiement(str, enum.Enum):
@@ -89,6 +109,19 @@ class Course(Base):
     # course livrée et l'adresse déclarée du client. Élevée = fausse adresse
     # (prix réduit) ou fausse livraison → revue admin.
     ecart_livraison_km = Column(Float, nullable=True)
+
+    # Échec de livraison et retour du colis (migration 024).
+    # arrivee_client_at : le livreur signale qu'il est chez le client (démarre
+    # l'attente minimale avant « client absent »).
+    arrivee_client_at = Column(DateTime(timezone=True), nullable=True)
+    echec_livraison_raison = Column(String(30), nullable=True)
+    echec_livraison_at = Column(DateTime(timezone=True), nullable=True)
+    retournee_at = Column(DateTime(timezone=True), nullable=True)
+    # Frais de retour dus au livreur (TAUX_FRAIS_RETOUR × prix), pris sur le
+    # Crédit de l'expéditeur. `frais_retour_restant` > 0 = Crédit insuffisant :
+    # l'expéditeur ne peut plus créer de course tant qu'il n'a pas rechargé.
+    frais_retour = Column(Float, nullable=True)
+    frais_retour_restant = Column(Float, nullable=False, default=0.0, server_default="0")
     geniuspay_reference = Column(String(100), nullable=True)
     geniuspay_checkout_url = Column(Text, nullable=True)
     

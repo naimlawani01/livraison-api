@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     # Course en récupération / livraison depuis plus longtemps que ce délai
     # (depuis l'acceptation) → alerte admin + expéditeur (colis possiblement perdu).
     DELAI_ALERTE_COURSE_MINUTES: int = 180
+    # Livraison impossible : attente minimale chez le client (depuis « Je suis
+    # arrivé ») avant de pouvoir déclarer « client absent ».
+    ATTENTE_CLIENT_MINUTES: int = 10
+    # Frais de retour versés au livreur qui rapporte le colis, en part du prix
+    # de la course. Pris sur le Crédit de l'expéditeur (c'est son client).
+    TAUX_FRAIS_RETOUR: float = 0.5
+    # Colis en retour depuis plus longtemps que ce délai (expéditeur injoignable)
+    # → alerte admin.
+    DELAI_ALERTE_RETOUR_MINUTES: int = 120
 
     # Sécurité — double authentification admin : mot de passe + code SMS.
     # Passer à False seulement le temps que l'admin-web gère `otp_required`.

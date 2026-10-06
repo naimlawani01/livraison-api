@@ -34,8 +34,14 @@ async def get_credit(
     expediteur: Expediteur = Depends(get_current_expediteur),
     db: AsyncSession = Depends(get_db),
 ):
-    """Solde de Crédit courant de l'expéditeur."""
-    return {"credit_solde": round(expediteur.credit_solde or 0.0, 2)}
+    """Solde de Crédit courant de l'expéditeur, et frais de retour encore dus
+    (colis rapportés alors que le Crédit était trop bas : tant que > 0, la
+    création de course est bloquée)."""
+    from ....services import credit_service
+    return {
+        "credit_solde": round(expediteur.credit_solde or 0.0, 2),
+        "frais_retour_dus": await credit_service.frais_retour_dus(db, expediteur.id),
+    }
 
 
 @router.get("/me/credit/transactions")

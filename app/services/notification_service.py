@@ -148,6 +148,8 @@ class NotificationService:
             "EN_LIVRAISON":    ("Livraison en cours", "Le livreur est en route vers le client"),
             "TERMINEE":        ("Livraison terminée !", "La course a bien été livrée"),
             "ANNULEE":         ("Course annulée", "La livraison a été annulée"),
+            "RETOUR":          ("Livraison impossible", "Le livreur vous rapporte le colis. Confirmez sa réception dans l'app."),
+            "RETOURNEE":       ("Colis rendu", "Le colis a été rendu à l'expéditeur"),
         }
 
         titre, msg = status_notifs.get(status, ("Mise à jour", f"Statut : {status}"))
