@@ -198,6 +198,8 @@ class TestRetourRecu:
         await session.refresh(course)
         assert course.frais_retour_restant == 5_000
         assert await credit_service.frais_retour_dus(session, p.id) == 5_000
+        from app.api.v1.endpoints.credit import get_credit
+        assert (await get_credit(p, session))["frais_retour_dus"] == 5_000   # visible dans l'app
 
         nouvelle = CourseCreate(contact_client_nom="C2", contact_client_telephone="620000001",
                                 prix_propose=1, mode_paiement=ModePaiement.CASH)
