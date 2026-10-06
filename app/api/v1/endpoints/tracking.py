@@ -600,6 +600,8 @@ const STATUS_CONFIG = {{
   EN_RECUPERATION: {{ pip: 1, icon: '🛵', label: 'Livreur en route', title: 'Livreur sur place',        desc: 'Récupération en cours' }},
   EN_LIVRAISON:    {{ pip: 2, icon: '🚀', label: 'En chemin',        title: 'En route vers vous',       desc: 'Le livreur arrive !' }},
   TERMINEE:        {{ pip: 3, icon: '🎉', label: 'Livré',            title: 'Livraison terminée',       desc: '' }},
+  RETOUR:          {{ pip: 2, icon: '↩️', label: 'Retour',           title: 'Livraison impossible',     desc: 'Le colis retourne chez l’expéditeur' }},
+  RETOURNEE:       {{ pip: 2, icon: '↩️', label: 'Retour',           title: 'Colis rendu à l’expéditeur', desc: 'Contactez-le pour une nouvelle livraison' }},
 }};
 
 const VEHICULE_EMOJI = {{
@@ -670,7 +672,7 @@ function updateMap(data, vehiculeEmoji) {{
   const liv = data.livreur_position;
   const part = data.expediteur_position;
   const cli = data.client_position;
-  const isFinished = data.status === 'TERMINEE' || data.status === 'ANNULEE';
+  const isFinished = ['TERMINEE', 'ANNULEE', 'RETOUR', 'RETOURNEE'].includes(data.status);
 
   // Course terminée/annulée → on retire le livreur et la ligne de route
   if (isFinished) {{

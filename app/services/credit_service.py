@@ -78,6 +78,7 @@ async def recharger(
         geniuspay_reference=geniuspay_reference,
     )
     db.add(txn)
+    await _regler_frais_retour_dus(db, p)
     await db.commit()
     await db.refresh(txn)
     return txn
@@ -243,6 +244,7 @@ async def crediter_avoir(
         course_id=course_id, description=description, statut="complete",
     )
     db.add(txn)
+    await _regler_frais_retour_dus(db, p)
     await db.commit()
     await db.refresh(txn)
     return txn
@@ -381,6 +383,110 @@ async def crediter_admin(
         statut="complete",
     )
     db.add(txn)
+    await _regler_frais_retour_dus(db, p)
     await db.commit()
     await db.refresh(txn)
     return txn
+
+
+# ── Retour du colis : frais de retour (livraison impossible) ─────────────────
+
+async def frais_retour_dus(db: AsyncSession, expediteur_id) -> float:
+    """Frais de retour encore dus par l'expéditeur (Crédit insuffisant au moment
+    du retour). Tant que > 0, il ne peut pas créer de nouvelle course."""
+    from ..models.course import Course
+    total = (await db.execute(
+        select(func.sum(Course.frais_retour_restant)).where(
+            Course.expediteur_id == expediteur_id,
+            Course.frais_retour_restant > 0,
+        )
+    )).scalar()
+    return round(float(total or 0.0), 2)
+
+
+async def _verser_frais_retour(db: AsyncSession, p: Expediteur, course, montant: float, libelle: str) -> float:
+    """Débite ``montant`` (≤ Crédit) de l'expéditeur verrouillé ``p`` et le
+    crédite sur les Gains du livreur de la course (ligne verrouillée).
+    Ne commit pas. Retourne le montant effectivement versé."""
+    from ..models.livreur import Livreur
+    from ..models.wallet_transaction import WalletTransaction
+
+    if montant <= 0 or not course.livreur_id:
+        return 0.0
+    livreur = (await db.execute(
+        select(Livreur).where(Livreur.id == course.livreur_id).with_for_update()
+    )).scalar_one_or_none()
+    if livreur is None:
+        return 0.0
+    avant = p.credit_solde or 0.0
+    p.credit_solde = soldes.credit_debiter(avant, montant)
+    db.add(CreditTransaction(
+        expediteur_id=p.id, type="frais_retour", montant=montant,
+        solde_avant=avant, solde_apres=p.credit_solde, course_id=course.id,
+        description=f"{libelle} — course #{course.numero_course}", statut="complete",
+    ))
+    gains_avant = livreur.solde_disponible or 0.0
+    livreur.solde_disponible = soldes.gains_crediter(gains_avant, montant)
+    livreur.total_gains = (livreur.total_gains or 0.0) + montant
+    db.add(WalletTransaction(
+        livreur_id=livreur.id, type="credit", montant=montant,
+        solde_avant=gains_avant, solde_apres=livreur.solde_disponible,
+        description=f"{libelle} — course #{course.numero_course}",
+        course_id=course.id, statut="complete",
+    ))
+    return montant
+
+
+async def payer_frais_retour(db: AsyncSession, course) -> tuple[float, float]:
+    """Paie au livreur les frais de retour d'une course (colis rapporté).
+
+    Montant : ``TAUX_FRAIS_RETOUR`` × prix, pris sur le Crédit de l'expéditeur et
+    **plafonné à son solde** (Sönaiyaa n'avance jamais). Le reste est noté dû
+    sur la course (``frais_retour_restant``) : il bloque la création de courses
+    et sera versé au livreur dès la prochaine entrée sur le Crédit. Idempotent :
+    ne fait rien si les frais ont déjà été fixés. Ne commit pas (l'appelant tient
+    le verrou de la course). Retourne ``(verse, restant)``.
+    """
+    from ..core.config import settings
+
+    if course.frais_retour is not None:
+        return 0.0, float(course.frais_retour_restant or 0.0)
+    frais = soldes.frais_retour(course.prix_propose, settings.TAUX_FRAIS_RETOUR)
+    course.frais_retour = frais
+    course.frais_retour_restant = 0.0
+    if frais <= 0:
+        return 0.0, 0.0
+    p = await _lock_expediteur(db, course.expediteur_id)
+    a_verser, _ = soldes.credit_prelever_partiel(p.credit_solde or 0.0, frais)
+    verse = await _verser_frais_retour(db, p, course, a_verser, "Frais de retour du colis")
+    course.frais_retour_restant = round(frais - verse, 2)
+    if course.frais_retour_restant > 0:
+        logger.warning(
+            "Frais de retour partiellement couverts — reste dû par l'expéditeur",
+            extra={"course_id": str(course.id), "restant": course.frais_retour_restant},
+        )
+    return verse, course.frais_retour_restant
+
+
+async def _regler_frais_retour_dus(db: AsyncSession, p: Expediteur) -> float:
+    """Après une entrée sur le Crédit (recharge, avoir, ajustement admin) :
+    verse aux livreurs les frais de retour encore dus, les plus anciens d'abord,
+    dans la limite du Crédit. ``p`` est déjà verrouillé. Ne commit pas."""
+    from ..models.course import Course
+
+    dues = (await db.execute(
+        select(Course).where(
+            Course.expediteur_id == p.id,
+            Course.frais_retour_restant > 0,
+        ).order_by(Course.retournee_at.asc().nullsfirst(), Course.created_at.asc())
+        .with_for_update()
+    )).scalars().all()
+    total = 0.0
+    for course in dues:
+        if (p.credit_solde or 0.0) <= 0:
+            break
+        a_verser, _ = soldes.credit_prelever_partiel(p.credit_solde or 0.0, course.frais_retour_restant)
+        verse = await _verser_frais_retour(db, p, course, a_verser, "Frais de retour (solde)")
+        course.frais_retour_restant = round(course.frais_retour_restant - verse, 2)
+        total += verse
+    return round(total, 2)

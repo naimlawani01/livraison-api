@@ -56,6 +56,12 @@ class CourseAnnulation(BaseModel):
     raison: str = Field(..., min_length=2, max_length=500, description="Raison de l'annulation")
 
 
+class EchecLivraison(BaseModel):
+    """Livraison impossible déclarée par le livreur."""
+    raison: str = Field(..., pattern="^(client_absent|refus_client)$",
+                        description="client_absent ou refus_client")
+
+
 class CourseEvaluation(BaseModel):
     """Évaluation d'une course"""
     note_livreur: int = Field(..., ge=1, le=5)
@@ -82,6 +88,12 @@ class CourseResponse(CourseBase):
     remboursement_du: Optional[float] = None
     rembourse_at: Optional[datetime] = None
     ecart_livraison_km: Optional[float] = None
+    arrivee_client_at: Optional[datetime] = None
+    echec_livraison_raison: Optional[str] = None
+    echec_livraison_at: Optional[datetime] = None
+    retournee_at: Optional[datetime] = None
+    frais_retour: Optional[float] = None
+    frais_retour_restant: float = 0.0
     exige_code_livraison: bool
     distance_km: Optional[float]
     duree_estimee_minutes: Optional[int]

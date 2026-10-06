@@ -5,7 +5,9 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from ....core.database import get_db
 from ....core.config import settings
-from ....models.course import Course, CourseStatus, ModePaiement, Payeur
+from ....models.course import (
+    Course, CourseStatus, ModePaiement, Payeur, RaisonEchecLivraison, STATUTS_LIVREUR_OCCUPE,
+)
 from ....models.expediteur import Expediteur
 from ....models.livreur import Livreur
 from ....models.user import User, UserRole
@@ -15,6 +17,7 @@ from ....schemas.course import (
     CourseResponse,
     CourseEvaluation,
     CourseAnnulation,
+    EchecLivraison,
     CourseWithDetails,
     CourseDisponibleResponse
 )
@@ -219,6 +222,15 @@ async def create_course(
         exige_code_livraison=course_data.exige_code_livraison,
         code_livraison=code_livraison,
     )
+
+    # Frais de retour impayés (colis rapporté alors que le Crédit était trop
+    # bas) : plus de nouvelle course tant que l'expéditeur n'a pas rechargé.
+    dus = await credit_service.frais_retour_dus(db, expediteur.id)
+    if dus > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Frais de retour impayés : {int(dus):,} GNF. Rechargez votre Crédit pour créer une course.".replace(",", " "),
+        )
 
     db.add(course)
     await db.flush()  # obtient course.id sans committer (FK du débit Crédit)
@@ -510,7 +522,7 @@ async def accepter_course(
     # est réglé en cash par l'expéditeur — il n'a aucune avance à faire.
 
     # Compter les courses actives du livreur
-    active_statuses = [CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON]
+    active_statuses = STATUTS_LIVREUR_OCCUPE
     count_query = select(func.count()).where(
         Course.livreur_id == livreur.id,
         Course.status.in_(active_statuses)
@@ -563,8 +575,22 @@ async def _controler_position_livraison(course: Course, livreur: Livreur) -> Non
     On ne bloque pas (le GPS peut être imprécis) : on enregistre l'écart et on
     alerte au-delà de SEUIL_ECART_LIVRAISON_KM → revue admin.
     """
-    if course.latitude_client is None or course.longitude_client is None:
+    ecart = await _distance_livreur_client(course, livreur)
+    if ecart is None:
         return
+    course.ecart_livraison_km = round(ecart, 2)
+    if ecart > settings.SEUIL_ECART_LIVRAISON_KM:
+        logger.warning(
+            "Livraison loin de l'adresse déclarée — revue admin",
+            extra={"course_id": str(course.id), "ecart_km": round(ecart, 2)},
+        )
+
+
+async def _distance_livreur_client(course: Course, livreur: Livreur) -> Optional[float]:
+    """Distance (km) entre la dernière position connue du livreur (Redis, sinon
+    base) et l'adresse déclarée du client. ``None`` si l'une des deux manque."""
+    if course.latitude_client is None or course.longitude_client is None:
+        return None
     position = None
     try:
         from ....core.redis import redis_client
@@ -576,14 +602,34 @@ async def _controler_position_livraison(course: Course, livreur: Livreur) -> Non
     if position is None and livreur.latitude is not None and livreur.longitude is not None:
         position = (livreur.latitude, livreur.longitude)
     if position is None:
+        return None
+    return GeolocationService.calculer_distance(position, (course.latitude_client, course.longitude_client))
+
+
+def _crediter_part_livreur_mm(db: AsyncSession, course: Course, livreur: Livreur, description: str) -> None:
+    """Course Mobile Money : la plateforme a encaissé → crédite la part livreur
+    sur ses Gains (retirables). ``livreur`` doit être verrouillé. Course cash :
+    rien (l'expéditeur a remis la part livreur en espèces à la récupération)."""
+    if course.mode_paiement != ModePaiement.MOBILE_MONEY:
         return
-    ecart = GeolocationService.calculer_distance(position, (course.latitude_client, course.longitude_client))
-    course.ecart_livraison_km = round(ecart, 2)
-    if ecart > settings.SEUIL_ECART_LIVRAISON_KM:
-        logger.warning(
-            "Livraison loin de l'adresse déclarée — revue admin",
-            extra={"course_id": str(course.id), "ecart_km": round(ecart, 2)},
+    if course.paiement_confirme != "oui":
+        logger.error(
+            "Course MM sans paiement confirmé — Gains non crédités",
+            extra={"course_id": str(course.id)},
         )
+        return
+    solde_avant = livreur.solde_disponible
+    livreur.solde_disponible = soldes.gains_crediter(solde_avant, course.montant_livreur)
+    db.add(WalletTransaction(
+        livreur_id=livreur.id,
+        type="credit",
+        montant=course.montant_livreur,
+        solde_avant=solde_avant,
+        solde_apres=livreur.solde_disponible,
+        description=description,
+        course_id=course.id,
+        statut="complete",
+    ))
 
 
 @router.patch("/{course_id}/statut", response_model=CourseResponse)
@@ -656,26 +702,7 @@ async def update_course_status(
         await _controler_position_livraison(course, livreur)
         livreur.total_gains += course.montant_livreur  # gains totaux (cash + plateforme) — statistique
 
-        if course.mode_paiement == ModePaiement.MOBILE_MONEY and course.paiement_confirme != "oui":
-            logger.error(
-                "Course MM terminée sans paiement confirmé — Gains non crédités",
-                extra={"course_id": str(course.id)},
-            )
-        elif course.mode_paiement == ModePaiement.MOBILE_MONEY:
-            # La plateforme a encaissé le client → crédite les Gains (retirables) du livreur.
-            solde_avant = livreur.solde_disponible
-            livreur.solde_disponible = soldes.gains_crediter(solde_avant, course.montant_livreur)
-            txn = WalletTransaction(
-                livreur_id=livreur.id,
-                type="credit",
-                montant=course.montant_livreur,
-                solde_avant=solde_avant,
-                solde_apres=livreur.solde_disponible,
-                description=f"Course #{course.numero_course} (Mobile Money)",
-                course_id=course.id,
-                statut="complete",
-            )
-            db.add(txn)
+        _crediter_part_livreur_mm(db, course, livreur, f"Course #{course.numero_course} (Mobile Money)")
         # CASH : l'expéditeur a remis la part livreur en espèces à la récupération, et la
         # commission a déjà été prélevée sur le Crédit de l'expéditeur à la création de
         # la course. Rien à débiter côté livreur — plus de dette, plus de solde négatif.
@@ -684,7 +711,7 @@ async def update_course_status(
         other_active_query = select(func.count()).where(
             Course.livreur_id == livreur.id,
             Course.id != course.id,
-            Course.status.in_([CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON])
+            Course.status.in_(STATUTS_LIVREUR_OCCUPE)
         )
         other_result = await db.execute(other_active_query)
         other_count = other_result.scalar() or 0
@@ -713,6 +740,184 @@ async def update_course_status(
         logger.warning(f"Notification changement statut échouée: {e}")
     
     return vue_livreur(course)  # jamais les jetons au livreur
+
+
+# ── Livraison impossible : client absent / refus → retour du colis ───────────
+
+async def _course_livreur_verrouillee(db: AsyncSession, course_id: UUID, livreur: Livreur) -> Course:
+    course = (await db.execute(
+        select(Course).where(Course.id == course_id, Course.livreur_id == livreur.id)
+        .with_for_update().execution_options(populate_existing=True)
+    )).scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course non trouvée")
+    return course
+
+
+async def _exiger_chez_le_client(course: Course, livreur: Livreur) -> None:
+    """Garde-fou anti « faux échec » : le livreur doit être près de l'adresse du
+    client. Si la position du livreur ou du client est inconnue (GPS coupé,
+    client n'ayant pas partagé sa position), on laisse passer mais on trace."""
+    ecart = await _distance_livreur_client(course, livreur)
+    if ecart is None:
+        logger.warning("Contrôle de présence chez le client impossible (position inconnue)",
+                       extra={"course_id": str(course.id)})
+        return
+    course.ecart_livraison_km = round(ecart, 2)
+    if ecart > settings.SEUIL_ECART_LIVRAISON_KM:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vous êtes à {ecart:.1f} km de l'adresse du client. Rendez-vous sur place d'abord.".replace(".", ",", 1),
+        )
+
+
+@router.post("/{course_id}/arrivee-client", response_model=CourseResponse)
+async def signaler_arrivee_client(
+    course_id: UUID,
+    livreur: Livreur = Depends(get_current_livreur),
+    db: AsyncSession = Depends(get_db),
+):
+    """Le livreur est chez le client : démarre l'attente minimale
+    (``ATTENTE_CLIENT_MINUTES``) avant de pouvoir déclarer « client absent ».
+    Idempotent : la première heure d'arrivée est conservée."""
+    course = await _course_livreur_verrouillee(db, course_id, livreur)
+    if course.status != CourseStatus.EN_LIVRAISON:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="La course n'est pas en livraison.")
+    await _exiger_chez_le_client(course, livreur)
+    if course.arrivee_client_at is None:
+        course.arrivee_client_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(course)
+    return vue_livreur(course)
+
+
+@router.post("/{course_id}/echec-livraison", response_model=CourseResponse)
+async def declarer_echec_livraison(
+    course_id: UUID,
+    echec: EchecLivraison,
+    livreur: Livreur = Depends(get_current_livreur),
+    db: AsyncSession = Depends(get_db),
+):
+    """Livraison impossible (client absent ou refus du colis) → ``RETOUR`` : le
+    livreur rapporte le colis à l'expéditeur.
+
+    * Le trajet aller est dû : la part livreur reste acquise (cash déjà remis ;
+      Mobile Money crédité maintenant sur ses Gains). La commission n'est pas rendue.
+    * Les frais de retour sont versés quand l'expéditeur confirme avoir récupéré
+      le colis (``/retour-recu``).
+    """
+    course = await _course_livreur_verrouillee(db, course_id, livreur)
+    if course.status != CourseStatus.EN_LIVRAISON:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="La course n'est pas en livraison.")
+    await _exiger_chez_le_client(course, livreur)
+
+    maintenant = datetime.now(timezone.utc)
+    if echec.raison == RaisonEchecLivraison.CLIENT_ABSENT.value:
+        if course.arrivee_client_at is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Signalez d'abord votre arrivée chez le client.")
+        arrivee = course.arrivee_client_at
+        if arrivee.tzinfo is None:  # SQLite (tests) renvoie des dates naïves
+            arrivee = arrivee.replace(tzinfo=timezone.utc)
+        attendu = (maintenant - arrivee).total_seconds() / 60
+        reste = settings.ATTENTE_CLIENT_MINUTES - attendu
+        if reste > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Attendez encore {max(1, round(reste))} min et essayez d'appeler le client.",
+            )
+
+    course.status = CourseStatus.RETOUR
+    course.echec_livraison_raison = echec.raison
+    course.echec_livraison_at = maintenant
+
+    # Trajet aller dû : part livreur (Mobile Money → Gains maintenant).
+    livreur = (await db.execute(
+        select(Livreur).where(Livreur.id == livreur.id)
+        .with_for_update().execution_options(populate_existing=True)
+    )).scalar_one()
+    livreur.total_gains += course.montant_livreur
+    _crediter_part_livreur_mm(db, course, livreur, f"Course #{course.numero_course} (aller, livraison impossible)")
+    await db.commit()
+    await db.refresh(course)
+
+    logger.info("Livraison impossible — colis en retour",
+                extra={"course_id": str(course.id), "raison": echec.raison})
+    expediteur = (await db.execute(select(Expediteur).where(Expediteur.id == course.expediteur_id))).scalar_one_or_none()
+    try:
+        if expediteur:
+            token = await _get_user_device_token(db, expediteur.user_id)
+            if token:
+                await notification_service.notifier_changement_status(
+                    device_token=token, status=CourseStatus.RETOUR.value, numero_course=course.numero_course,
+                )
+    except Exception as e:  # noqa: BLE001 — la notification ne bloque jamais le retour
+        logger.warning(f"Notification retour échouée: {e}")
+    try:
+        from ....services.sms_service import sms_service
+        await sms_service.envoyer_sms_retour(
+            telephone=course.contact_client_telephone,
+            expediteur_nom=expediteur.nom if expediteur else "l'expéditeur",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"SMS retour client échoué: {e}")
+    return vue_livreur(course)
+
+
+@router.post("/{course_id}/retour-recu", response_model=CourseResponse)
+async def confirmer_retour_recu(
+    course_id: UUID,
+    expediteur: Expediteur = Depends(get_current_expediteur),
+    db: AsyncSession = Depends(get_db),
+):
+    """L'expéditeur a récupéré son colis → ``RETOURNEE``. Verse au livreur les
+    frais de retour (``TAUX_FRAIS_RETOUR`` × prix) depuis le Crédit, plafonnés
+    au solde ; le reste dû bloque la création de courses jusqu'à la recharge."""
+    course = (await db.execute(
+        select(Course).where(Course.id == course_id, Course.expediteur_id == expediteur.id)
+        .with_for_update().execution_options(populate_existing=True)
+    )).scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course non trouvée")
+    if course.status != CourseStatus.RETOUR:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Aucun colis en retour sur cette course.")
+
+    course.status = CourseStatus.RETOURNEE
+    course.retournee_at = datetime.now(timezone.utc)
+    verse, restant = await credit_service.payer_frais_retour(db, course)
+
+    if course.livreur_id:
+        autres = (await db.execute(select(func.count()).where(
+            Course.livreur_id == course.livreur_id,
+            Course.id != course.id,
+            Course.status.in_(STATUTS_LIVREUR_OCCUPE),
+        ))).scalar() or 0
+        if autres == 0:
+            liv = (await db.execute(select(Livreur).where(Livreur.id == course.livreur_id))).scalar_one_or_none()
+            if liv:
+                liv.is_en_course = False
+    await db.commit()
+    await db.refresh(course)
+
+    if course.livreur_id:
+        try:
+            liv = (await db.execute(select(Livreur).where(Livreur.id == course.livreur_id))).scalar_one_or_none()
+            token = await _get_user_device_token(db, liv.user_id) if liv else None
+            if token:
+                montant = f"{int(verse):,}".replace(",", " ")
+                message = (f"Colis rendu. {montant} GNF de frais de retour versés sur vos Gains."
+                           if restant <= 0 else
+                           f"Colis rendu. {montant} GNF versés ; le reste vous sera versé dès que l'expéditeur aura rechargé.")
+                await notification_service.envoyer_notification_push(
+                    token, "Retour confirmé", message,
+                    {"type": "changement_status", "numero_course": course.numero_course, "status": "RETOURNEE"},
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Notification retour reçu échouée: {e}")
+    return course
 
 
 @router.post("/{course_id}/annuler", response_model=CourseResponse)
@@ -755,7 +960,7 @@ async def annuler_course(
         )
     
     # Vérifier que la course peut être annulée
-    non_annulable = [CourseStatus.TERMINEE, CourseStatus.ANNULEE]
+    non_annulable = [CourseStatus.TERMINEE, CourseStatus.ANNULEE, CourseStatus.RETOURNEE]
     if course.status in non_annulable:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -765,7 +970,7 @@ async def annuler_course(
     # Colis en main : plus d'annulation par l'expéditeur ou le livreur (le livreur
     # a pu recevoir la part livreur en espèces à la récupération). Seul l'admin
     # tranche, après examen.
-    if course.status == CourseStatus.EN_LIVRAISON and not is_admin:
+    if course.status in (CourseStatus.EN_LIVRAISON, CourseStatus.RETOUR) and not is_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le colis a déjà été récupéré : contactez le support Sönaiyaa pour annuler."
@@ -789,7 +994,7 @@ async def annuler_course(
             other_active = select(func.count()).where(
                 Course.livreur_id == livreur.id,
                 Course.id != course.id,
-                Course.status.in_([CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON])
+                Course.status.in_(STATUTS_LIVREUR_OCCUPE)
             )
             other_result = await db.execute(other_active)
             if (other_result.scalar() or 0) == 0:

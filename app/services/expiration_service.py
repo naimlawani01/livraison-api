@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..models.course import Course, CourseStatus, ModePaiement
+from ..models.course import Course, CourseStatus, ModePaiement, STATUTS_LIVREUR_OCCUPE
 from . import paiement_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
@@ -139,6 +139,22 @@ async def surveiller_courses_en_cours(db: AsyncSession, maintenant: Optional[dat
                                f"La course #{course.numero_course} dure plus que prévu. "
                                "Le support Sönaiyaa a été alerté.")
         alertes += 1
+
+    # Colis en retour que l'expéditeur ne récupère pas (injoignable) → admin.
+    seuil_retour = maintenant - timedelta(minutes=settings.DELAI_ALERTE_RETOUR_MINUTES)
+    retours = (await db.execute(
+        select(Course).where(Course.status == CourseStatus.RETOUR, Course.echec_livraison_at < seuil_retour)
+    )).scalars().all()
+    for course in retours:
+        if not await _premiere_alerte(course.id):
+            continue
+        logger.error("Colis en retour non récupéré par l'expéditeur — intervention admin",
+                     extra={"course_id": str(course.id), "numero": course.numero_course,
+                            "livreur_id": str(course.livreur_id)})
+        await _push_expediteur(db, course, "Récupérez votre colis",
+                               f"Le livreur vous rapporte le colis de la course #{course.numero_course}. "
+                               "Confirmez sa réception dans l'app.")
+        alertes += 1
     return {"liberees": liberees, "alertes": alertes}
 
 
@@ -155,7 +171,7 @@ async def _liberer_livreur_si_libre(db: AsyncSession, livreur_id) -> None:
     from ..models.livreur import Livreur
     actives = (await db.execute(select(func.count()).where(
         Course.livreur_id == livreur_id,
-        Course.status.in_((CourseStatus.ACCEPTEE, CourseStatus.EN_RECUPERATION, CourseStatus.EN_LIVRAISON)),
+        Course.status.in_(STATUTS_LIVREUR_OCCUPE),
     ))).scalar() or 0
     if actives == 0:
         await db.execute(update(Livreur).where(Livreur.id == livreur_id).values(is_en_course=False))
